@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: raah_db
+    environment:
+      POSTGRES_USER: raah_user
+      POSTGRES_PASSWORD: raah_pass
+      POSTGRES_DB: raah_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - raah_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raah_user -d raah_db"]
+      interval: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: raah_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: raah_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://raah_user:raah_pass@db:5432/raah_db
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - raah_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build: ./backend
+    container_name: raah_worker
+    environment:
+      DATABASE_URL: postgresql://raah_user:raah_pass@db:5432/raah_db
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - raah_uploads:/app/uploads
+    depends_on:
+      - backend
+    command: celery -A celery_app worker --loglevel=info
+
+  beat:
+    build: ./backend
+    container_name: raah_beat
+    environment:
+      DATABASE_URL: postgresql://raah_user:raah_pass@db:5432/raah_db
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - worker
+    command: celery -A celery_app beat --loglevel=info
+
+volumes:
+  raah_pgdata:
+  raah_uploads:

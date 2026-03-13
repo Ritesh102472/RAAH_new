@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", sans-serif;
+  --animate-scan: scan 2s ease-in-out infinite;
+
+  @keyframes scan {
+
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+
+    50% {
+      transform: translateY(400px);
+    }
+  }
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  color: #f3f4f6;
+  /* gray-100 for crisp text on dark backgrounds */
+  background-color: #020617;
+  /* Very deep blue/obsidian base */
+}
+
+/* Dynamic Animated Mesh Background for the Dashboard */
+.dynamic-light-bg {
+  background: linear-gradient(-45deg, #fdfbf7, #fce5d8, #f3f4f6, #fff3e0);
+  background-size: 400% 400%;
+  animation: gradientFlow 15s ease infinite;
+}
+
+/* Dynamic Live Kesari Background for Login Pages */
+.kesari-bg {
+  background: linear-gradient(-45deg, #ff4b2b, #ff416c, #fca048, #ff7b00);
+  background-size: 400% 400%;
+  animation: gradientFlow 15s ease infinite;
+}
+
+/* Premium Light Dynamic Theme — Peach · Sage · Orange · Antique Gold · Silver · Champagne */
+.hackathon-bg {
+  background: linear-gradient(
+    -45deg,
+    #FFDAC1,   /* soft peach */
+    #B7D9B0,   /* sage green */
+    #FFB347,   /* warm orange */
+    #C9A84C,   /* antique gold (no bright yellow) */
+    #DCE3E8,   /* silver-cool */
+    #F7C59F,   /* champagne rose */
+    #A8C5A0,   /* muted mint green */
+    #E8A87C    /* terracotta peach */
+  );
+  background-size: 800% 800%;
+  animation: gradientFlow 30s ease infinite;
+  color: #1f2937; /* Tailwind gray-800 as base text on light bg */
+}
+
+/* CSS Overrides for Dark-Themed Tailwind Classes inside .hackathon-bg */
+.hackathon-bg .text-white { color: #111827 !important; }         /* gray-900 */
+.hackathon-bg .text-gray-100 { color: #1f2937 !important; }      /* gray-800 */
+.hackathon-bg .text-gray-300 { color: #374151 !important; }      /* gray-700 */
+.hackathon-bg .text-gray-400 { color: #4b5563 !important; }      /* gray-600 */
+.hackathon-bg .text-gray-500 { color: #6b7280 !important; }      /* gray-500 */
+.hackathon-bg .border-white\/10 { border-color: rgba(0,0,0,0.1) !important; }
+.hackathon-bg .border-white\/5 { border-color: rgba(0,0,0,0.05) !important; }
+.hackathon-bg .border-gray-600\/50 { border-color: rgba(0,0,0,0.15) !important; }
+.hackathon-bg .bg-white\/5 { background-color: rgba(0,0,0,0.03) !important; }
+.hackathon-bg .bg-white\/10 { background-color: rgba(0,0,0,0.05) !important; }
+.hackathon-bg .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,0.06) !important; }
+.hackathon-bg .shadow-\[10px_0_30px_rgba\(0\,0\,0\,0\.5\)\] { box-shadow: 10px 0 20px rgba(0,0,0,0.05) !important; }
+.hackathon-bg .shadow-\[0_10px_30px_rgba\(0\,0\,0\,0\.5\)\] { box-shadow: 0 10px 20px rgba(0,0,0,0.05) !important; }
+
+@keyframes gradientFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Premium Glassmorphism Utility Class */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+}
+
+/* High-End Light Glass CSS (For Dashboard Elements) */
+.hackathon-glass {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+}
+
+/* Dark Theme Scrollbar for Dashboard */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.3);
+}
