@@ -87,6 +87,10 @@ def scan_mapillary_area(lat: float, lng: float, radius: int = 50, user_id: int =
     from ai_service.model import run_detection, classify_severity_from_detection
     from citizen_service.router import find_nearby_pothole
     import datetime
+    import json
+    import redis
+    from config import settings
+    from utils.broadcast import broadcast_event
 
     db = SessionLocal()
     try:
@@ -191,6 +195,16 @@ def scan_mapillary_area(lat: float, lng: float, radius: int = 50, user_id: int =
 
         db.commit()
         print(f"[Mapillary] Scan complete. Found {total_potholes} potholes.")
+        if total_potholes > 0:
+            try:
+                broadcast_event("new_pothole", {
+                    "count": total_potholes,
+                    "source": "mapillary",
+                    "potholes_found": total_potholes
+                })
+            except Exception as rb_e:
+                print(f"Failed to broadcast Mapillary event: {rb_e}")
+
         return {"status": "success", "potholes_found": total_potholes}
 
     except Exception as e:
@@ -201,3 +215,87 @@ def scan_mapillary_area(lat: float, lng: float, radius: int = 50, user_id: int =
     finally:
         db.close()
 
+
+@celery_app.task(name="utils.tasks.autonomous_discovery")
+def autonomous_discovery(lat: float = 28.6139, lng: float = 77.2090, depth: int = 1):
+    """
+    Autonomous Mapillary Discovery.
+    Starting from a point, it scans for Mapillary's own AI-detected potholes.
+    'depth' can be used to crawl adjacent areas.
+    """
+    import asyncio
+    from database.connection import SessionLocal
+    from database.models import Pothole, Severity, PotholeStatus, ReportSource
+    from map_service.mapillary import fetch_map_features
+    from map_service.geocoding import reverse_geocode
+    import json
+    import redis
+    from config import settings
+    from utils.broadcast import broadcast_event
+
+    db = SessionLocal()
+    try:
+        print(f"[Discovery] Starting autonomous scan at {lat}, {lng} (depth={depth})")
+        features = asyncio.run(fetch_map_features(lat, lng, radius=0.05)) # ~5km radius
+        
+        if not features:
+            print("[Discovery] No Mapillary features found in this area.")
+            try:
+                broadcast_event("discovery_complete", {
+                    "count": 0, 
+                    "message": "Global discovery scan complete. No new potholes detected in this area."
+                })
+            except: pass
+            return {"count": 0}
+
+        new_count = 0
+        for feat in features:
+            feat_id = feat.get("id")
+            geom = feat.get("geometry", {})
+            coords = geom.get("coordinates")
+            if not coords or len(coords) < 2:
+                continue
+            
+            f_lng, f_lat = coords[0], coords[1]
+            
+            # Check if we already have this Mapillary feature
+            existing = db.query(Pothole).filter(Pothole.image_path == f"mapillary_feat://{feat_id}").first()
+            if existing:
+                continue
+
+            # Basic geocode (might be slow if many, so we use a simplified version or skip if too many)
+            # For discovery, we'll just use the coordinates and update road later if needed
+            
+            p = Pothole(
+                lat=f_lat, lng=f_lng,
+                road_name="Mapillary Discovered Road",
+                location_source="mapillary_global_ai",
+                image_path=f"mapillary_feat://{feat_id}",
+                severity=Severity.medium,
+                confidence=0.85, # Mapillary's detections are generally reliable
+                status=PotholeStatus.detected,
+                source=ReportSource.mapillary,
+            )
+            db.add(p)
+            new_count += 1
+
+        db.commit()
+        print(f"[Discovery] Successfully ingested {new_count} new potholes from Mapillary Global.")
+
+        if new_count > 0:
+            try:
+                broadcast_event("new_pothole", {
+                    "count": new_count,
+                    "source": "mapillary_autonomous",
+                    "autonomous": True
+                })
+            except Exception as rb_e:
+                print(f"Failed to broadcast discovery event: {rb_e}")
+
+        return {"new_detected": new_count}
+    except Exception as e:
+        db.rollback()
+        print(f"[Discovery] Task failed: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()

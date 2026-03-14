@@ -3,6 +3,7 @@ import { Camera, Activity, ScrollText, Crosshair, AlertTriangle, Upload, CheckCi
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import api, { API_BASE } from '../services/api';
+import { useWebSocketContext } from '../context/WebSocketContext';
 
 export default function LiveMonitoringPage() {
   const navigate = useNavigate();
@@ -16,12 +17,24 @@ export default function LiveMonitoringPage() {
   const [selectedPotholeId, setSelectedPotholeId] = useState(null);
   const [potholeDetail, setPotholeDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const fileInputRef = useRef(null);
   const imageRef = useRef(null);
 
   useEffect(() => {
     if (activeTab === 'logs') fetchLogs();
   }, [activeTab]);
+
+  const { isLive, subscribe } = useWebSocketContext();
+
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      if (message.event === 'new_pothole' || message.event === 'discovery_complete') {
+        if (activeTab === 'logs') fetchLogs();
+      }
+    });
+    return unsubscribe;
+  }, [subscribe, activeTab]);
 
   async function fetchLogs() {
     setLogsLoading(true);
@@ -115,6 +128,14 @@ export default function LiveMonitoringPage() {
             </button>
           ))}
         </div>
+        
+        {/* Real-time Status */}
+        <div className="flex items-center gap-3 px-4 py-2 bg-black/40 rounded-xl border border-white/5 backdrop-blur-md">
+          <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-emerald-500 shadow-[0_0_10px_#10b981] animate-pulse' : 'bg-red-500'}`}></div>
+          <span className={`text-[10px] font-black uppercase tracking-widest ${isLive ? 'text-emerald-400' : 'text-red-400'}`}>
+            {isLive ? 'Live Stream Active' : 'Connecting...'}
+          </span>
+        </div>
       </div>
 
       <div className="flex-1 hackathon-glass rounded-3xl p-8 shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] overflow-hidden relative border border-white/5">
@@ -137,22 +158,37 @@ export default function LiveMonitoringPage() {
                 </div>
               ) : uploadResult ? (
                 <div className="flex flex-col items-center gap-6 z-10 w-full h-full p-4 overflow-hidden">
-                  <div className="relative flex-1 min-h-0 border-2 border-cyan-500/20 rounded-xl overflow-hidden bg-black/40 group/img shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-                    <img
-                      ref={imageRef}
-                      src={`${API_BASE}${uploadResult.file_url}`}
-                      alt="Pothole detection"
-                      className="h-full w-full object-contain"
-                      onLoad={(e) => {
-                        setImageSize({
-                          width: e.target.naturalWidth,
-                          height: e.target.naturalHeight
-                        });
-                      }}
-                    />
+                  <div className="relative flex-1 min-h-0 border-2 border-cyan-500/20 rounded-xl overflow-hidden bg-black/40 group/img shadow-[0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center">
+                    {uploadResult.is_video ? (
+                      <video
+                        src={`${API_BASE}${uploadResult.file_url}`}
+                        controls
+                        className="max-h-full max-w-full object-contain"
+                        onLoadedMetadata={(e) => {
+                          setImageSize({
+                            width: e.target.videoWidth,
+                            height: e.target.videoHeight
+                          });
+                        }}
+                        onTimeUpdate={(e) => setVideoCurrentTime(e.target.currentTime)}
+                      />
+                    ) : (
+                      <img
+                        ref={imageRef}
+                        src={`${API_BASE}${uploadResult.file_url}`}
+                        alt="Pothole detection"
+                        className="h-full w-full object-contain"
+                        onLoad={(e) => {
+                          setImageSize({
+                            width: e.target.naturalWidth,
+                            height: e.target.naturalHeight
+                          });
+                        }}
+                      />
+                    )}
 
-                    {/* SVG Overlay for Bounding Boxes */}
-                    {imageSize.width > 0 && (
+                    {/* SVG Overlay for Bounding Boxes — images only (video has boxes burned in) */}
+                    {!uploadResult.is_video && imageSize.width > 0 && (
                       <svg
                         className="absolute inset-0 w-full h-full pointer-events-none"
                         viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}

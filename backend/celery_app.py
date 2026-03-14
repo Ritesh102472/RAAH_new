@@ -26,5 +26,10 @@ celery_app.conf.update(
             "task": "utils.tasks.refresh_predictions",
             "schedule": 21600.0,  # Every 6 hours
         },
+        "autonomous-discovery": {
+            "task": "utils.tasks.autonomous_discovery",
+            "schedule": 3600.0,  # Every hour (Global Ingestion)
+            "args": (28.6139, 77.2090), # Starting at Delhi
+        },
     },
 )

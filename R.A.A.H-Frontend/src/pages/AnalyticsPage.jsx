@@ -1,21 +1,41 @@
-import React, { useEffect, useState } from 'react';
-import { TrendingUp, Activity, AlertTriangle, CheckCircle, Clock, Map } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { TrendingUp, Activity, AlertTriangle, CheckCircle, Clock, Map, Globe } from 'lucide-react';
 import api from '../services/api';
 
 export default function AnalyticsPage() {
   const [stats, setStats] = useState(null);
   const [highways, setHighways] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isLive, setIsLive] = useState(false);
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const heatLayerRef = useRef(null);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [sRes, hRes] = await Promise.all([
+        const [sRes, hRes, mRes] = await Promise.all([
           api.get('/analytics/stats'),
           api.get('/analytics/highways'),
+          api.get('/map/list'),
         ]);
         setStats(sRes.data);
         setHighways(hRes.data.items || []);
+        
+        // Update Heatmap if initialized
+        if (mapInstanceRef.current && mRes.data.potholes) {
+          const points = mRes.data.potholes.map(p => [p.latitude, p.longitude, 0.5]);
+          if (heatLayerRef.current) {
+            heatLayerRef.current.setLatLngs(points);
+          } else if (window.L) {
+            heatLayerRef.current = window.L.heatLayer(points, {
+              radius: 25,
+              blur: 15,
+              maxZoom: 17,
+              gradient: { 0.4: 'blue', 0.65: 'lime', 1: 'red' }
+            }).addTo(mapInstanceRef.current);
+          }
+        }
       } catch (err) {
         console.error('Analytics load error:', err);
       } finally {
@@ -23,6 +43,62 @@ export default function AnalyticsPage() {
       }
     }
     loadData();
+
+    // WebSocket Connection
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
+    const wsUrl = `${protocol}//${host}/ws`;
+    
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('✅ Analytics Live Stream Active');
+      setIsLive(true);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.event === 'new_pothole') {
+          // Increment locally for instant feedback
+          setStats(prev => prev ? {
+            ...prev,
+            total_detections: (prev.total_detections || 0) + (message.data?.count || 1)
+          } : null);
+          // Reload everything to get accurate indices
+          loadData();
+        } else if (message.event === 'discovery_complete') {
+          // Refresh data in case new potholes were ingested
+          loadData();
+        }
+      } catch (err) {
+        console.error('WS Analytics Error:', err);
+      }
+    };
+
+    ws.onclose = () => setIsLive(false);
+
+    // Initialize Map
+    if (mapRef.current && !mapInstanceRef.current && window.L) {
+      const map = window.L.map(mapRef.current, {
+        center: [20.5937, 78.9629], // India center
+        zoom: 4,
+        zoomControl: false,
+        attributionControl: false
+      });
+      window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19
+      }).addTo(map);
+      mapInstanceRef.current = map;
+    }
+
+    return () => {
+      ws.close();
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, []);
 
   const roadHealth = stats?.road_health_index ?? 68;
@@ -91,13 +167,25 @@ export default function AnalyticsPage() {
             <button className="text-xs font-bold uppercase tracking-widest bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-2 rounded-lg text-cyan-400 transition-all">Export</button>
           </div>
           <div className="flex-1 bg-black/40 rounded-2xl border border-white/5 relative overflow-hidden flex items-center justify-center min-h-[350px] shadow-[inset_0_2px_15px_rgba(0,0,0,0.8)]">
-            <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(#22d3ee 1px, transparent 1px), linear-gradient(90deg, #22d3ee 1px, transparent 1px)', backgroundSize: '30px 30px' }}></div>
-            <div className="absolute top-1/4 left-1/3 w-40 h-40 bg-red-500 rounded-full mix-blend-screen filter blur-[60px] opacity-80 animate-pulse"></div>
-            <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-orange-500 rounded-full mix-blend-screen filter blur-[80px] opacity-60"></div>
-            <div className="absolute bottom-1/4 right-1/4 w-32 h-32 bg-purple-500 rounded-full mix-blend-screen filter blur-[50px] opacity-70"></div>
-            <p className="z-10 text-cyan-400 font-mono text-xs font-bold tracking-[0.3em] border border-cyan-400/30 bg-black/60 backdrop-blur-md px-6 py-3 rounded-lg">
-              {loading ? 'LOADING...' : `GEOSPATIAL_HEATMAP_ACTIVE — ${totalDetections} DETECTIONS`}
-            </p>
+            <div ref={mapRef} className="absolute inset-0 z-0" />
+            
+            {/* Custom Overlay (Overlay always visible on top of map) */}
+            <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+              <p className="text-cyan-400 font-mono text-[10px] font-black tracking-[0.3em] border border-cyan-400/30 bg-black/60 backdrop-blur-md px-4 py-2 rounded-lg flex items-center gap-3">
+                {isLive && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>}
+                {loading ? 'LOADING...' : `GEOSPATIAL_HEATMAP_ACTIVE — ${totalDetections} DETECTIONS`}
+              </p>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur-md border border-white/10 rounded-lg text-[8px] font-bold text-gray-400 uppercase tracking-widest">
+                <Globe size={10} className="text-cyan-500" /> Live Data Stream
+              </div>
+            </div>
+
+            {/* Heatmap Legend */}
+            <div className="absolute bottom-4 right-4 z-10 bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/5 text-[9px] font-bold uppercase tracking-widest space-y-2">
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500"></div> High Density</div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-lime-500"></div> Medium Density</div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Low Density</div>
+            </div>
           </div>
         </div>
 

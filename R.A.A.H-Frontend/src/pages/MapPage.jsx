@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Map as MapIcon, Navigation, ShieldAlert, X, MapPin, Globe } from 'lucide-react';
+import { Map as MapIcon, Navigation, ShieldAlert, X, MapPin, Globe, Activity } from 'lucide-react';
 import api from '../services/api';
+import { useWebSocketContext } from '../context/WebSocketContext';
 
-// Leaflet CSS is loaded via CDN in index.html (added by vite config)
-let L;
+// Leaflet CSS is loaded via CDN in index.html
 
 export default function MapPage() {
   const [activeTab, setActiveTab] = useState('highways');
   const [selectedPothole, setSelectedPothole] = useState(null);
-  const [potholes, setPotholes] = useState([]);
-  const [predictions, setPredictions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [isDiscovering, setIsDiscovering] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
+  const [potholes, setPotholes] = useState([]);
+  const [predictions, setPredictions] = useState([]);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersLayerRef = useRef(null);
@@ -23,7 +26,7 @@ export default function MapPage() {
       initMap();
     }, 100);
 
-    // Refresh data every 10s
+    // Refresh data every 10s (fallback)
     const interval = setInterval(() => {
       fetchAndRender();
     }, 10000);
@@ -38,8 +41,37 @@ export default function MapPage() {
     };
   }, []);
 
+  const { subscribe } = useWebSocketContext();
+
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      try {
+        if (message.event === 'new_pothole') {
+          fetchAndRender(); // Refresh map data
+          setScanMessage(`Real-time update: ${message.data?.count || 1} new potholes detected!`);
+          setTimeout(() => setScanMessage(''), 5000);
+        } else if (message.event === 'discovery_complete') {
+          setScanMessage(message.data?.message || 'Global discovery complete.');
+          setTimeout(() => setScanMessage(''), 6000);
+          fetchAndRender();
+        }
+      } catch (e) {
+        console.error('Map WS error:', e);
+      }
+    });
+    return unsubscribe;
+  }, [subscribe]);
+
   function initMap() {
-    if (mapInstanceRef.current || !mapRef.current || !window.L) return;
+    if (mapInstanceRef.current || !mapRef.current) return;
+    
+    // Check for Leaflet availability
+    if (!window.L) {
+      console.log('Leaflet (window.L) not ready, retrying in 500ms...');
+      setTimeout(initMap, 500);
+      return;
+    }
+
     try {
       const map = window.L.map(mapRef.current, {
         center: [20.5937, 78.9629], // India center
@@ -96,6 +128,29 @@ export default function MapPage() {
       setIsScanning(false);
     }
   }
+
+  const handleGlobalDiscovery = async () => {
+    setIsDiscovering(true);
+    setScanMessage('Initiating global autonomous discovery...');
+    try {
+      const center = mapInstanceRef.current ? mapInstanceRef.current.getCenter() : { lat: 28.6139, lng: 77.2090 };
+      await api.post('/citizen/mapillary/discover', null, {
+        params: {
+          latitude: center.lat,
+          longitude: center.lng
+        }
+      });
+      setScanMessage('Global discovery task started. Ingesting live data...');
+      setTimeout(() => setScanMessage(''), 5000);
+    } catch (err) {
+      console.error('Discovery failed:', err);
+      setScanMessage('Discovery task failed to start.');
+      setTimeout(() => setScanMessage(''), 3000);
+    } finally {
+      setIsDiscovering(false);
+    }
+  };
+
 
   function renderMarkers(pts, preds, tab) {
     if (!markersLayerRef.current || !window.L || !mapInstanceRef.current) return;
@@ -208,9 +263,9 @@ export default function MapPage() {
       {/* Map Content Section */}
       <div className="flex-1 relative flex flex-col md:flex-row gap-6">
         {/* Map Container */}
-        <div className="flex-1 hackathon-glass rounded-3xl border border-white/5 overflow-hidden relative shadow-[inset_0_0_30px_rgba(0,0,0,0.5)]">
+        <div className="flex-1 hackathon-glass rounded-3xl border border-white/5 overflow-hidden relative shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] min-h-[500px]">
           {/* Leaflet Map */}
-          <div ref={mapRef} className="absolute inset-0 w-full h-full z-0" style={{ minHeight: '400px' }} />
+          <div ref={mapRef} className="absolute inset-0 w-full h-full z-0" />
 
           {/* Mapillary Scan Button */}
           <div className="absolute top-6 left-16 z-10 hidden md:block">
@@ -231,6 +286,27 @@ export default function MapPage() {
               ) : (
                 <>
                   <Globe size={16} /> Scan Area (Mapillary)
+                </>
+              )}
+            </button>
+
+            <button 
+              onClick={handleGlobalDiscovery}
+              disabled={isDiscovering}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl backdrop-blur-md border shadow-lg transition-all font-black tracking-widest text-[10px] uppercase ${
+                isDiscovering 
+                  ? 'bg-cyan-900/60 text-cyan-400 border-cyan-500/50 cursor-not-allowed' 
+                  : 'bg-indigo-900/80 text-white border-white/20 hover:bg-white/10 hover:border-indigo-400 hover:text-indigo-400 hover:shadow-[0_0_20px_rgba(129,140,248,0.3)]'
+              }`}
+            >
+              {isDiscovering ? (
+                <>
+                  <div className="w-3 h-3 rounded-full border-2 border-t-indigo-400 border-r-transparent border-b-indigo-400 border-l-transparent animate-spin" />
+                  Discovering...
+                </>
+              ) : (
+                <>
+                  <Activity size={14} /> Wide Discovery (Deep)
                 </>
               )}
             </button>

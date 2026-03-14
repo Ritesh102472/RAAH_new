@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { TrendingUp, RefreshCcw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { useWebSocketContext } from '../context/WebSocketContext';
 
 export default function DashboardHome() {
   const [stats, setStats] = useState(null);
@@ -29,10 +30,22 @@ export default function DashboardHome() {
 
   useEffect(() => {
     fetchData();
-    // Poll every 30 seconds
-    const interval = setInterval(fetchData, 30000);
+    // Poll every 60 seconds as fallback
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  const { isLive, subscribe } = useWebSocketContext();
+
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      console.log('📩 Dashboard event:', message);
+      if (message.event === 'new_pothole' || message.event === 'discovery_complete') {
+        fetchData();
+      }
+    });
+    return unsubscribe;
+  }, [subscribe]);
 
   const maxCount = weekly.reduce((max, d) => Math.max(max, d.count), 1);
 
@@ -97,6 +110,12 @@ export default function DashboardHome() {
         <div className="flex justify-between items-center mb-6 z-10">
           <h3 className="font-black text-gray-700 uppercase tracking-[0.2em] text-sm flex items-center gap-2">
             <TrendingUp size={18} className="text-cyan-600" /> 7-Day Detection Trend
+            {isLive && (
+              <span className="flex items-center gap-1.5 ml-4 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+                <span className="text-[8px] font-black text-red-500 tracking-tighter uppercase">Live Monitoring</span>
+              </span>
+            )}
           </h3>
           <div className="flex items-center gap-4">
             <button

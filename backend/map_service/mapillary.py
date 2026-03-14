@@ -59,3 +59,32 @@ async def get_image_by_id(image_id: str) -> Optional[bytes]:
     except Exception as e:
         print(f"[Mapillary] Failed to fetch image {image_id}: {e}")
         return None
+
+async def fetch_map_features(lat: float, lng: float, radius: float = 0.01) -> List[Dict[str, Any]]:
+    """
+    Fetch Mapillary's own detected map features (objects) in a bbox.
+    Specifically looks for potholes.
+    """
+    if not settings.MAPILLARY_ACCESS_TOKEN or settings.MAPILLARY_ACCESS_TOKEN == "your-mapillary-token-here":
+        return []
+
+    try:
+        # radius is in degrees roughly (0.01 is ~1km)
+        bbox = f"{lng - radius},{lat - radius},{lng + radius},{lat + radius}"
+        url = f"{MAPILLARY_BASE}/map_features"
+        params = {
+            "access_token": settings.MAPILLARY_ACCESS_TOKEN,
+            "fields": "id,geometry,object_type,first_seen_at,last_seen_at",
+            "bbox": bbox,
+            "layers": "objects",
+            "object_types": "object--pothole", # Mapillary feature name
+            "limit": 50,
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("data", [])
+    except Exception as e:
+        print(f"[Mapillary] Failed to fetch map features: {e}")
+        return []

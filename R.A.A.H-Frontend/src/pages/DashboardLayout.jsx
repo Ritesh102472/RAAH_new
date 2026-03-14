@@ -11,10 +11,47 @@ import {
   Cpu,
   Settings
 } from 'lucide-react';
+import NotificationToast from '../components/NotificationToast';
+import { useState, useCallback, useEffect } from 'react';
+import { useWebSocketContext } from '../context/WebSocketContext';
 
 export default function DashboardLayout() {
   const location = useLocation();
   const { user } = useAuth();
+
+  const [notifications, setNotifications] = useState([]);
+
+  const clearNotification = useCallback((id) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  const addNotification = useCallback((notif) => {
+    const id = Date.now();
+    setNotifications((prev) => [{ ...notif, id }, ...prev].slice(0, 3)); // Keep last 3
+    setTimeout(() => clearNotification(id), 6000);
+  }, [clearNotification]);
+
+  const { subscribe } = useWebSocketContext();
+
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      console.log('📡 Global message:', message);
+      if (message.event === 'new_pothole') {
+        addNotification({
+          event: message.event,
+          message: `${message.data?.count || 1} new pothole(s) detected. Updating system data...`,
+          data: message.data
+        });
+      } else if (message.event === 'discovery_complete') {
+        addNotification({
+          event: message.event,
+          message: message.data?.message || 'Global discovery scan complete.',
+          data: message.data
+        });
+      }
+    });
+    return unsubscribe;
+  }, [subscribe, addNotification]);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
 
@@ -122,6 +159,10 @@ export default function DashboardLayout() {
         </div>
       </main>
 
+      <NotificationToast 
+        notifications={notifications} 
+        clearNotification={clearNotification} 
+      />
     </div>
   );
 }

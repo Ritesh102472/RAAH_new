@@ -17,6 +17,10 @@ from map_service.geocoding import reverse_geocode
 import asyncio
 import datetime
 import logging
+import json
+import redis
+from config import settings
+from utils.broadcast import broadcast_event_async
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +88,10 @@ async def upload_pothole(
         5. Create/merge pothole record
         6. Auto-generate complaint
         """
-        ALLOWED = {"image/jpeg", "image/png", "image/webp", "image/jpg", "video/mp4", "video/quicktime"}
+        ALLOWED = {
+            "image/jpeg", "image/png", "image/webp", "image/jpg", 
+            "video/mp4", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/avi"
+        }
         if file.content_type not in ALLOWED:
             raise HTTPException(400, detail=f"Unsupported file type: {file.content_type}")
 
@@ -235,15 +242,31 @@ async def upload_pothole(
 
         db.commit()
 
-        return {
+        # Use annotated video if available (for video uploads)
+        annotated_video = detection_result.get("annotated_video")
+
+        response_data = {
             "status": "success",
             "location": {"lat": lat, "lng": lng, "source": location_source},
             "road": geo["road"],
             "city": geo["city"],
             "potholes": created_potholes,
             "total_detected": len(potholes_detected),
-            "file_url": file_url,
+            "file_url": annotated_video or file_url,
+            "is_video": file.content_type.startswith("video/"),
         }
+        
+        # Real-time Broadcast
+        try:
+            await broadcast_event_async("new_pothole", {
+                "count": len(potholes_detected),
+                "location": {"lat": lat, "lng": lng},
+                "potholes": created_potholes
+            })
+        except Exception as rb_e:
+            print(f"Failed to broadcast event: {rb_e}")
+
+        return response_data
     except Exception as e:
         import traceback
         with open("error.log", "a") as f:
@@ -291,5 +314,20 @@ async def trigger_mapillary_scan(
     return {
         "status": "queued",
         "message": f"Mapillary scan queued for {latitude}, {longitude} with radius {radius}m.",
+        "task_id": str(task.id)
+    }
+
+@router.post("/mapillary/discover")
+async def trigger_autonomous_discovery(
+    latitude: float = 28.6139,
+    longitude: float = 77.2090,
+    radius: float = 0.05
+):
+    """Trigger autonomous Mapillary ingestion for an area."""
+    from utils.tasks import autonomous_discovery
+    task = autonomous_discovery.delay(latitude, longitude)
+    return {
+        "status": "discovery_started",
+        "message": f"Autonomous discovery started around {latitude}, {longitude}.",
         "task_id": str(task.id)
     }
