@@ -19,6 +19,13 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function AdminRoute({ children }) {
+  const { token, user } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  if (user?.role !== 'admin' && user?.role !== 'superadmin') return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -29,7 +36,7 @@ function AppRoutes() {
         <Route path="/dashboard" element={<DashboardHome />} />
         <Route path="/monitoring" element={<LiveMonitoringPage />} />
         <Route path="/map" element={<MapPage />} />
-        <Route path="/complaints" element={<ComplaintsPage />} />
+        <Route path="/complaints" element={<AdminRoute><ComplaintsPage /></AdminRoute>} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/ai-system" element={<AISystemPage />} />

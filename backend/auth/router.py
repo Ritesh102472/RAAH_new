@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
+import bcrypt
 from datetime import date
 
 from database.connection import get_db
@@ -10,7 +10,15 @@ from auth.jwt import create_access_token
 from auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    # bcrypt.hashpw expects bytes. gensalt defaults to 12 rounds.
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
 # ── Schemas ──────────────────────────────────────────────────
@@ -66,7 +74,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         dob=req.dob,
         email=req.email,
         phone=req.phone,
-        password_hash=pwd_context.hash(req.password),
+        password_hash=hash_password(req.password),
         role=UserRole.citizen,
     )
     db.add(user)
@@ -80,7 +88,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
-    if not user or not pwd_context.verify(req.password, user.password_hash):
+    if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")

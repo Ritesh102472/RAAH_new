@@ -16,27 +16,33 @@ export default function DashboardLayout() {
   const location = useLocation();
   const { user } = useAuth();
 
-  const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
-    { name: 'Live Monitoring', path: '/monitoring', icon: <Activity size={20} /> },
-    { name: 'Map', path: '/map', icon: <MapIcon size={20} /> },
-    { name: 'Complaints', path: '/complaints', icon: <AlertTriangle size={20} /> },
-    { name: 'Analytics', path: '/analytics', icon: <BarChart3 size={20} /> },
-    { name: 'AI System', path: '/ai-system', icon: <Cpu size={20} /> },
-    { name: 'Settings', path: '/settings', icon: <Settings size={20} /> },
-  ];
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
+
+  const navItems = isAdmin
+    ? [
+      { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+      { name: 'Complaints', path: '/complaints', icon: <AlertTriangle size={20} /> },
+    ]
+    : [
+      { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+      { name: 'Live Monitoring', path: '/monitoring', icon: <Activity size={20} /> },
+      { name: 'Map', path: '/map', icon: <MapIcon size={20} /> },
+      { name: 'Analytics', path: '/analytics', icon: <BarChart3 size={20} /> },
+      { name: 'AI System', path: '/ai-system', icon: <Cpu size={20} /> },
+      { name: 'Settings', path: '/settings', icon: <Settings size={20} /> },
+    ];
 
   return (
     <div className="flex h-screen overflow-hidden hackathon-bg text-gray-100 font-sans">
 
       {/* Decorative Background Elements */}
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-20 z-0">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-600/20 rounded-full blur-[120px]"></div>
+        <div className={`absolute top-1/4 left-1/4 w-96 h-96 ${isAdmin ? 'bg-red-600/20' : 'bg-blue-600/20'} rounded-full blur-[120px]`}></div>
+        <div className={`absolute bottom-1/4 right-1/4 w-96 h-96 ${isAdmin ? 'bg-orange-600/20' : 'bg-cyan-600/20'} rounded-full blur-[120px]`}></div>
       </div>
 
       {/* Extreme Dark Glass Sidebar */}
-      <aside className="w-64 hackathon-glass border-r border-white/10 flex flex-col z-20 shadow-[10px_0_30px_rgba(0,0,0,0.5)]">
+      <aside className={`w-64 hackathon-glass ${isAdmin ? 'bg-black/80 border-red-500/20 shadow-[10px_0_40px_rgba(255,0,0,0.15)]' : 'border-white/10 shadow-[10px_0_30px_rgba(0,0,0,0.5)]'} border-r flex flex-col z-20`}>
         {/* Brand Logo Area */}
         <div className="h-28 flex flex-col items-center justify-center px-4 border-b border-white/5 pt-4">
           <img
@@ -55,8 +61,8 @@ export default function DashboardLayout() {
                 key={item.name}
                 to={item.path}
                 className={`flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300 group relative overflow-hidden ${isActive
-                    ? 'bg-blue-900/40 border border-blue-400/30 text-white font-bold shadow-[0_0_20px_rgba(59,130,246,0.1)]'
-                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 font-semibold border border-transparent'
+                  ? 'bg-blue-900/40 border border-blue-400/30 text-white font-bold shadow-[0_0_20px_rgba(59,130,246,0.1)]'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 font-semibold border border-transparent'
                   }`}
               >
                 {isActive && (
@@ -92,11 +98,14 @@ export default function DashboardLayout() {
       <main className="flex-1 flex flex-col relative overflow-y-auto z-10 w-full scroll-smooth">
 
         {/* Top Header (Glassmorphic) */}
-        <header className="h-28 hackathon-glass border-b border-white/10 flex items-center justify-between px-10 sticky top-0 z-30 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
-          <h2 className="text-3xl font-black text-gray-800 uppercase tracking-[0.2em] flex items-center gap-4 drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
-            <div className="w-2.5 h-10 bg-cyan-500 rounded-full shadow-[0_0_15px_rgba(6,182,212,0.6)]"></div>
-            {location.pathname.replace('/', '').replace('-', ' ') || 'Dashboard'}
-          </h2>
+        <header className={`h-28 hackathon-glass border-b ${isAdmin ? 'border-red-500/20 bg-black/60' : 'border-white/10'} flex items-center justify-between px-10 sticky top-0 z-30 shadow-[0_10px_30px_rgba(0,0,0,0.5)]`}>
+          <div className="flex flex-col">
+            <h2 className={`text-3xl font-black ${isAdmin ? 'text-red-500' : 'text-gray-800'} uppercase tracking-[0.2em] flex items-center gap-4 drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]`}>
+              <div className={`w-2.5 h-10 ${isAdmin ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.6)]' : 'bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.6)]'} rounded-full`}></div>
+              {location.pathname.replace('/', '').replace(/-/g, ' ') || 'Dashboard'}
+            </h2>
+            {isAdmin && <span className="text-[10px] font-black text-red-400 tracking-[0.4em] uppercase mt-1 pl-6">Admin Command Center</span>}
+          </div>
 
           {/* Return Home — light glass style to match the warm dashboard theme */}
           <Link to="/">

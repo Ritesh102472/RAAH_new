@@ -18,14 +18,15 @@ def get_stats(db: Session = Depends(get_db)):
     - total_scans, active_potholes, repairs_pending
     - road_health_index, total_detections, repair_rate, avg_resolution_days
     """
-    total_potholes = db.query(Pothole).count()
+    total_scans = db.query(Report).count()
     active_potholes = db.query(Pothole).filter(
-        Pothole.status.in_([PotholeStatus.detected, PotholeStatus.complaint_filed])
+        Pothole.status.in_([PotholeStatus.detected, PotholeStatus.complaint_filed, PotholeStatus.escalated])
     ).count()
     repair_in_progress = db.query(Pothole).filter(
         Pothole.status == PotholeStatus.repair_in_progress
     ).count()
     resolved = db.query(Pothole).filter(Pothole.status == PotholeStatus.resolved).count()
+    total_potholes = db.query(Pothole).count()
     total_users = db.query(User).count()
     total_complaints = db.query(Complaint).count()
 
@@ -55,10 +56,10 @@ def get_stats(db: Session = Depends(get_db)):
         avg_days = 0.0
 
     return {
-        "total_scans": total_potholes,
+        "total_scans": total_scans,
         "active_potholes": active_potholes,
         "repairs_pending": repair_in_progress,
-        "total_detections": total_potholes,
+        "total_detections": total_scans,
         "road_health_index": road_health,
         "repair_rate": repair_rate,
         "avg_resolution_days": round(avg_days, 1),
@@ -95,16 +96,16 @@ def get_highway_breakdown(db: Session = Depends(get_db)):
 
 @router.get("/weekly")
 def get_weekly_trend(db: Session = Depends(get_db)):
-    """Returns pothole detection counts for the last 7 days."""
-    today = datetime.date.today()
+    """Returns report counts for the last 7 days (including merges)."""
+    today = datetime.datetime.utcnow().date()
     result = []
     for i in range(6, -1, -1):
         day = today - datetime.timedelta(days=i)
         start = datetime.datetime.combine(day, datetime.time.min)
         end = datetime.datetime.combine(day, datetime.time.max)
-        count = db.query(Pothole).filter(
-            Pothole.created_at >= start,
-            Pothole.created_at <= end,
+        count = db.query(Report).filter(
+            Report.created_at >= start,
+            Report.created_at <= end,
         ).count()
         result.append({"date": str(day), "count": count})
     return {"days": result}

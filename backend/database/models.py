@@ -29,8 +29,9 @@ class Severity(str, enum.Enum):
 
 
 class ComplaintStatus(str, enum.Enum):
-    filed = "filed"
-    pending = "pending"
+    detected = "detected"
+    reported = "reported"
+    under_repair = "under_repair"
     resolved = "resolved"
     escalated = "escalated"
 
@@ -68,6 +69,9 @@ class Pothole(Base):
     road_name = Column(String(500), default="Unknown Road")
     city = Column(String(255), default="Unknown City")
     state = Column(String(255), default="Unknown State")
+    country = Column(String(255), default="India")
+    full_address = Column(Text, nullable=True)
+    location_source = Column(String(50), nullable=True) # "image_exif", "browser_gps"
     image_path = Column(Text, nullable=True)
     severity = Column(Enum(Severity), default=Severity.medium, nullable=False)
     confidence = Column(Float, default=0.0)
@@ -93,11 +97,13 @@ class Complaint(Base):
     id = Column(Integer, primary_key=True, index=True)
     complaint_number = Column(String(50), unique=True, index=True)
     pothole_id = Column(Integer, ForeignKey("potholes.id"), nullable=False)
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
     location_text = Column(Text, default="")
     road_name = Column(String(500), default="")
     severity = Column(Enum(Severity), default=Severity.medium)
     number_of_reports = Column(Integer, default=1)
-    status = Column(Enum(ComplaintStatus), default=ComplaintStatus.filed)
+    status = Column(Enum(ComplaintStatus), default=ComplaintStatus.reported)
     agency = Column(String(255), default="PWD")
     maintenance_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
@@ -117,6 +123,7 @@ class Report(Base):
     image_path = Column(Text, nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
+    location_source = Column(String(50), nullable=True) # "image_exif", "browser_gps"
     created_at = Column(DateTime, default=func.now())
 
     pothole = relationship("Pothole", back_populates="reports")

@@ -13,7 +13,109 @@ from database.models import (
 from auth.dependencies import require_admin, require_superadmin
 import datetime
 
+from pydantic import BaseModel
+
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class ComplaintActionRequest(BaseModel):
+    complaint_id: int
+
+
+def complaint_to_dict(c: Complaint) -> dict:
+    p = c.pothole
+    return {
+        "id": c.id,
+        "complaint_number": c.complaint_number,
+        "pothole_id": c.pothole_id,
+        "location": c.location_text or (f"{p.lat}, {p.lng}" if p else "Unknown"),
+        "road_name": c.road_name,
+        "severity": c.severity.value if c.severity else "medium",
+        "status": c.status.value if c.status else "reported",
+        "agency": c.agency,
+        "number_of_reports": c.number_of_reports,
+        "created_at": str(c.created_at)[:10] if c.created_at else "",
+    }
+
+
+@router.get("/complaints")
+def list_admin_complaints(
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    q = db.query(Complaint).join(Pothole).order_by(desc(Complaint.created_at))
+    if status:
+        try:
+            q = q.filter(Complaint.status == ComplaintStatus(status))
+        except ValueError:
+            raise HTTPException(400, detail=f"Invalid status: {status}")
+    
+    total = q.count()
+    items = q.offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "items": [complaint_to_dict(c) for c in items],
+    }
+
+
+@router.post("/mark-repaired")
+def admin_mark_repaired(
+    req: ComplaintActionRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    complaint = db.query(Complaint).filter(Complaint.id == req.complaint_id).first()
+    if not complaint:
+        raise HTTPException(404, detail="Complaint not found")
+
+    complaint.status = ComplaintStatus.resolved
+    complaint.updated_at = datetime.datetime.utcnow()
+    
+    pothole = complaint.pothole
+    if pothole:
+        pothole.status = PotholeStatus.resolved
+
+    action = AdminAction(
+        admin_id=admin.id,
+        pothole_id=complaint.pothole_id,
+        action_type="mark_repaired",
+        note="Marked as repaired via admin dashboard",
+    )
+    db.add(action)
+    db.commit()
+    return {"status": "success", "complaint_id": req.complaint_id}
+
+
+@router.post("/escalate")
+def admin_escalate(
+    req: ComplaintActionRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    complaint = db.query(Complaint).filter(Complaint.id == req.complaint_id).first()
+    if not complaint:
+        raise HTTPException(404, detail="Complaint not found")
+
+    complaint.status = ComplaintStatus.escalated
+    complaint.escalated_at = datetime.datetime.utcnow()
+    complaint.updated_at = datetime.datetime.utcnow()
+    
+    pothole = complaint.pothole
+    if pothole:
+        pothole.status = PotholeStatus.escalated
+
+    action = AdminAction(
+        admin_id=admin.id,
+        pothole_id=complaint.pothole_id,
+        action_type="escalate",
+        note="Escalated via admin dashboard",
+    )
+    db.add(action)
+    db.commit()
+    return {"status": "success", "complaint_id": req.complaint_id}
 
 
 @router.get("/users")

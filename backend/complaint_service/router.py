@@ -12,6 +12,7 @@ from database.models import (
 from auth.dependencies import get_current_user, require_admin
 from database.models import User
 import datetime
+import os
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 
@@ -33,13 +34,13 @@ def complaint_to_dict(c: Complaint) -> dict:
         "updated_at": str(c.updated_at)[:10] if c.updated_at else "",
         "lat": p.lat if p else None,
         "lng": p.lng if p else None,
-        "image_url": f"/static/{p.image_path}" if p and p.image_path else None,
+        "image_url": f"/uploads/{os.path.basename(p.image_path)}" if p and p.image_path else None,
     }
 
 
 @router.get("")
 def list_complaints(
-    status: Optional[str] = Query(None, description="filed, pending, resolved, escalated"),
+    status: Optional[str] = Query(None, description="detected, reported, under_repair, resolved, escalated"),
     severity: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = 0,

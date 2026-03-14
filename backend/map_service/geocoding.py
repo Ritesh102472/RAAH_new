@@ -46,7 +46,14 @@ async def reverse_geocode(lat: float, lng: float) -> Dict[str, str]:
         )
         state = addr.get("state", "Unknown State")
         country = addr.get("country", "India")
-        return {"road": road, "city": city, "state": state, "country": country}
+        full_address = data.get("display_name", f"{road}, {city}, {state}, {country}")
+        return {
+            "road": road, 
+            "city": city, 
+            "state": state, 
+            "country": country,
+            "full_address": full_address
+        }
     except Exception as e:
         print(f"[Geocoding] Failed for ({lat},{lng}): {e}")
         return default

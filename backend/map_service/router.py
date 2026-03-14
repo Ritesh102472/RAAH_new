@@ -21,8 +21,8 @@ def pothole_to_geojson(p: Pothole) -> dict:
             "road_name": p.road_name,
             "city": p.city,
             "state": p.state,
-            "severity": p.severity.value if p.severity else "medium",
-            "status": p.status.value if p.status else "detected",
+            "severity": p.severity.value if hasattr(p.severity, 'value') else (p.severity or "medium"),
+            "status": p.status.value if hasattr(p.status, 'value') else (p.status or "detected"),
             "confidence": p.confidence,
             "image_url": f"/uploads/{p.image_path.split('/')[-1]}" if p.image_path else None,
             "created_at": str(p.created_at)[:10] if p.created_at else "",
@@ -101,4 +101,23 @@ def get_map_stats(db: Session = Depends(get_db)):
         "medium": medium,
         "low": low,
         "resolved": resolved,
+    }
+
+@router.get("/list")
+def get_potholes_list(db: Session = Depends(get_db)):
+    """Simple list of potholes in user-requested format."""
+    potholes = db.query(Pothole).order_by(desc(Pothole.created_at)).all()
+    return {
+        "potholes": [
+            {
+                "id": f"PTH-{p.id:04d}",
+                "latitude": p.lat,
+                "longitude": p.lng,
+                "severity": p.severity.value if hasattr(p.severity, 'value') else (p.severity or "medium"),
+                "confidence": p.confidence,
+                "status": p.status.value if hasattr(p.status, 'value') else (p.status or "detected"),
+                "timestamp": p.created_at.isoformat() if p.created_at else ""
+            }
+            for p in potholes
+        ]
     }

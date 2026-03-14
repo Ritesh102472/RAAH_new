@@ -3,7 +3,7 @@ import { FileText, Wrench, CheckCircle, MapPin, AlertCircle, Clock } from 'lucid
 import api from '../services/api';
 
 export default function ComplaintsPage() {
-  const [activeTab, setActiveTab] = useState('filed');
+  const [activeTab, setActiveTab] = useState('reported');
   const [complaints, setComplaints] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -16,7 +16,7 @@ export default function ComplaintsPage() {
   async function fetchComplaints(status) {
     setLoading(true);
     try {
-      const res = await api.get(`/complaints?status=${status}&limit=50`);
+      const res = await api.get(`/admin/complaints?status=${status}&limit=50`);
       setComplaints(res.data.items || []);
       setTotal(res.data.total || 0);
     } catch (err) {
@@ -27,13 +27,14 @@ export default function ComplaintsPage() {
     }
   }
 
-  async function handleRescan(id) {
+  async function handleAction(id, type, note = "Action via admin dashboard") {
     setRescanLoading(id);
     try {
-      await api.post(`/complaints/${id}/rescan`);
-      setTimeout(() => fetchComplaints(activeTab), 1000);
+      const endpoint = type === 'repair' ? '/admin/mark-repaired' : '/admin/escalate';
+      await api.post(endpoint, { complaint_id: id });
+      setTimeout(() => fetchComplaints(activeTab), 500);
     } catch (err) {
-      console.error('Rescan failed:', err);
+      console.error(`${type} action failed:`, err);
     } finally {
       setRescanLoading(null);
     }
@@ -48,17 +49,17 @@ export default function ComplaintsPage() {
           <p className="text-cyan-400 font-bold uppercase tracking-[0.2em] text-xs mt-2 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">Automated Dispatch & Verification</p>
         </div>
         <div className="flex gap-4">
-          <button onClick={() => setActiveTab('filed')}
-            className={`flex items-center gap-3 px-6 py-3 rounded-lg font-bold transition-all uppercase tracking-widest text-xs shadow-sm ${activeTab === 'filed' ? 'bg-blue-900/40 text-cyan-400 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.3)]' : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'}`}>
-            <FileText size={18} className={activeTab === 'filed' ? 'drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]' : ''} /> Active Tickets
+          <button onClick={() => setActiveTab('reported')}
+            className={`flex items-center gap-3 px-6 py-3 rounded-lg font-bold transition-all uppercase tracking-widest text-xs shadow-sm ${activeTab === 'reported' ? 'bg-blue-900/40 text-cyan-400 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.3)]' : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'}`}>
+            <FileText size={18} className={activeTab === 'reported' ? 'drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]' : ''} /> Active Tickets
           </button>
-          <button onClick={() => setActiveTab('pending')}
-            className={`flex items-center gap-3 px-6 py-3 rounded-lg font-bold transition-all uppercase tracking-widest text-xs shadow-sm ${activeTab === 'pending' ? 'bg-orange-900/40 text-orange-400 border border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'}`}>
-            <Wrench size={18} className={activeTab === 'pending' ? 'drop-shadow-[0_0_8px_rgba(249,115,22,0.8)] animate-pulse' : ''} /> Pending Repairs
+          <button onClick={() => setActiveTab('under_repair')}
+            className={`flex items-center gap-3 px-6 py-3 rounded-lg font-bold transition-all uppercase tracking-widest text-xs shadow-sm ${activeTab === 'under_repair' ? 'bg-orange-900/40 text-orange-400 border border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'}`}>
+            <Wrench size={18} className={activeTab === 'under_repair' ? 'drop-shadow-[0_0_8px_rgba(249,115,22,0.8)] animate-pulse' : ''} /> Maintenance
           </button>
           <button onClick={() => setActiveTab('resolved')}
             className={`flex items-center gap-3 px-6 py-3 rounded-lg font-bold transition-all uppercase tracking-widest text-xs shadow-sm ${activeTab === 'resolved' ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'}`}>
-            <CheckCircle size={18} className={activeTab === 'resolved' ? 'drop-shadow-[0_0_8px_rgba(16,185,129,0.8)]' : ''} /> Resolved Iterations
+            <CheckCircle size={18} className={activeTab === 'resolved' ? 'drop-shadow-[0_0_8px_rgba(16,185,129,0.8)]' : ''} /> Resolved
           </button>
         </div>
       </div>
@@ -107,16 +108,22 @@ export default function ComplaintsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-4">
-                <button className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white font-bold uppercase tracking-widest text-[10px] border border-white/20 shadow-sm px-6 py-3.5 rounded-xl transition-all">
-                  Access API Logs
-                </button>
-                {activeTab === 'pending' && (
+                {activeTab !== 'resolved' && (
                   <button
-                    onClick={() => handleRescan(complaint.id)}
+                    onClick={() => handleAction(complaint.id, 'repair')}
                     disabled={rescanLoading === complaint.id}
-                    className="bg-cyan-600/80 hover:bg-cyan-500 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.4)] text-white font-black tracking-[0.2em] uppercase px-6 py-3.5 rounded-xl text-[10px] transition-all transform hover:scale-105 disabled:opacity-50"
+                    className="bg-emerald-600/80 hover:bg-emerald-500 border border-emerald-400/50 shadow-[0_0_15px_rgba(16,185,129,0.4)] text-white font-black tracking-[0.2em] uppercase px-6 py-3.5 rounded-xl text-[10px] transition-all transform hover:scale-105 disabled:opacity-50"
                   >
-                    {rescanLoading === complaint.id ? 'Queuing...' : 'Trigger Re-scan'}
+                    {rescanLoading === complaint.id ? 'Processing...' : 'Mark Repaired'}
+                  </button>
+                )}
+                {activeTab === 'reported' && (
+                  <button
+                    onClick={() => handleAction(complaint.id, 'escalate')}
+                    disabled={rescanLoading === complaint.id}
+                    className="bg-red-600/80 hover:bg-red-500 border border-red-400/50 shadow-[0_0_15px_rgba(239,68,68,0.4)] text-white font-black tracking-[0.2em] uppercase px-6 py-3.5 rounded-xl text-[10px] transition-all transform hover:scale-105 disabled:opacity-50"
+                  >
+                    Escalate
                   </button>
                 )}
               </div>

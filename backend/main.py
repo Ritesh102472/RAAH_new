@@ -3,10 +3,13 @@ R.A.A.H. — Autonomous Pothole Intelligence System
 FastAPI Main Application Entry Point
 """
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import traceback
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+import datetime
 
 from config import settings
 from database.connection import engine
@@ -42,6 +45,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    with open("error.log", "a") as f:
+        f.write(f"\n\n[GLOBAL ERROR] at {datetime.datetime.now()}:\n")
+        f.write(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc)},
+    )
 
 # CORS
 app.add_middleware(

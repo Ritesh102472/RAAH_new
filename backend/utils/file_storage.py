@@ -29,6 +29,6 @@ async def save_file(file_bytes: bytes, original_filename: str) -> str:
 
 def get_file_url(file_path: str) -> str:
     """Returns a URL path for serving the uploaded file."""
-    if file_path and file_path.startswith("./"):
-        file_path = file_path[2:]
-    return f"/static/{file_path}"
+    import os
+    filename = os.path.basename(file_path) if file_path else ""
+    return f"/uploads/{filename}"

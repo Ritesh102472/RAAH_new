@@ -14,21 +14,21 @@ export default function MapPage() {
   const mapInstanceRef = useRef(null);
   const markersLayerRef = useRef(null);
 
-  // Load Leaflet dynamically
+  // Initialize map once
   useEffect(() => {
-    if (!window.L) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-      document.head.appendChild(link);
-      const script = document.createElement('script');
-      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-      script.onload = () => initMap();
-      document.head.appendChild(script);
-    } else {
+    // Small delay to ensure container size is stabilized
+    const timer = setTimeout(() => {
       initMap();
-    }
+    }, 100);
+
+    // Refresh data every 10s
+    const interval = setInterval(() => {
+      fetchAndRender();
+    }, 10000);
+
     return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -37,42 +37,48 @@ export default function MapPage() {
   }, []);
 
   function initMap() {
-    if (mapInstanceRef.current || !mapRef.current) return;
-    const map = window.L.map(mapRef.current, {
-      center: [20.5937, 78.9629], // India center
-      zoom: 5,
-      zoomControl: true,
-    });
-    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
-      maxZoom: 19,
-    }).addTo(map);
-    mapInstanceRef.current = map;
-    markersLayerRef.current = window.L.layerGroup().addTo(map);
-    fetchAndRender();
+    if (mapInstanceRef.current || !mapRef.current || !window.L) return;
+    try {
+      const map = window.L.map(mapRef.current, {
+        center: [20.5937, 78.9629], // India center
+        zoom: 5,
+        zoomControl: true,
+      });
+      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(map);
+      mapInstanceRef.current = map;
+      markersLayerRef.current = window.L.layerGroup().addTo(map);
+      fetchAndRender();
+    } catch (err) {
+      console.error('Leaflet initialization failed:', err);
+    }
   }
 
   async function fetchAndRender() {
     try {
       const [ptRes, predRes] = await Promise.all([
-        api.get('/map/potholes'),
+        api.get('/map/list'),
         api.get('/map/predictions'),
       ]);
-      setPotholes(ptRes.data.features || []);
+      setPotholes(ptRes.data.potholes || []);
       setPredictions(predRes.data.features || []);
-      renderMarkers(ptRes.data.features || [], predRes.data.features || [], activeTab);
+      renderMarkers(ptRes.data.potholes || [], predRes.data.features || [], activeTab);
     } catch (err) {
       console.error('Map data fetch error:', err);
     }
   }
 
   function renderMarkers(pts, preds, tab) {
-    if (!markersLayerRef.current || !window.L) return;
+    if (!markersLayerRef.current || !window.L || !mapInstanceRef.current) return;
     markersLayerRef.current.clearLayers();
+    const bounds = [];
 
     if (tab === 'risk_zones') {
       preds.forEach(f => {
         const { lat, lng } = { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+        bounds.push([lat, lng]);
         const p = f.properties;
         const color = p.color || '#22c55e';
         window.L.circleMarker([lat, lng], {
@@ -88,28 +94,68 @@ export default function MapPage() {
         ).addTo(markersLayerRef.current);
       });
     } else {
-      pts.forEach(f => {
-        const { lat, lng } = { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
-        const p = f.properties;
-        const color = p.severity === 'high' ? '#ef4444' : p.severity === 'medium' ? '#f97316' : '#22d3ee';
-        const marker = window.L.circleMarker([lat, lng], {
-          radius: 10,
+      pts.forEach(p => {
+        const { latitude, longitude } = p;
+
+        // Filter: Ignore null/undefined or (0,0) coordinates
+        if (latitude == null || longitude == null || (latitude === 0 && longitude === 0)) return;
+        if (p.status === 'test' || p.is_test === true) return;
+
+        bounds.push([latitude, longitude]);
+        const color = p.severity === 'high' ? '#ef4444' : p.severity === 'medium' ? '#f97316' : '#3b82f6';
+
+        const marker = window.L.circleMarker([latitude, longitude], {
+          radius: 12,
           fillColor: color,
           color: '#fff',
-          weight: 2,
+          weight: 3,
           opacity: 1,
           fillOpacity: 0.9,
         });
+
+        const date = p.timestamp ? new Date(p.timestamp).toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        }) : 'Unknown';
+
+        const popupContent = `
+          <div style="font-family: 'Inter', sans-serif; padding: 12px; min-width: 180px; background: rgba(0,0,0,0.9); color: white; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 10px 20px rgba(0,0,0,0.5);">
+            <div style="font-weight: 900; color: #22d3ee; margin-bottom: 10px; font-size: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px;">${p.id}</div>
+            <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px;">Severity: <span style="color: ${color === '#ef4444' ? '#f87171' : color === '#f97316' ? '#fb923c' : '#60a5fa'}">${(p.severity || 'medium').toUpperCase()}</span></div>
+            <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px;">Confidence: <span style="color: #4ade80;">${Math.round((p.confidence || 0) * 100)}%</span></div>
+            <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px;">Status: <span style="color: #22d3ee;">${(p.status || 'Reported').replace(/_/g, ' ').toUpperCase()}</span></div>
+            <div style="font-size: 11px; color: #9ca3af; margin-top: 12px;">Detected: ${date}</div>
+          </div>
+        `;
+
+        marker.bindPopup(popupContent, {
+          closeButton: false,
+          className: 'hackathon-leaflet-popup'
+        });
+
         marker.on('click', () => setSelectedPothole(p));
         marker.addTo(markersLayerRef.current);
       });
     }
+
+    // Goal 2: Automatically zoom to detected potholes (3-tier logic)
+    if (bounds.length > 1) {
+      // Multiple potholes: Fit to bounds
+      mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50] });
+    } else if (bounds.length === 1) {
+      // Single pothole: Detailed view (Zoom 14)
+      mapInstanceRef.current.setView(bounds[0], 14);
+    } else {
+      // No potholes: Default view (India, Zoom 5)
+      mapInstanceRef.current.setView([20.5937, 78.9629], 5);
+    }
   }
 
-  // Re-render markers when tab changes
+  // Re-render markers when tab OR data changes
   useEffect(() => {
     renderMarkers(potholes, predictions, activeTab);
-  }, [activeTab]);
+  }, [activeTab, potholes, predictions]);
 
   return (
     <div className="flex flex-col h-full space-y-8 relative z-10 w-full text-gray-100">
@@ -152,7 +198,7 @@ export default function MapPage() {
         {selectedPothole && (
           <div className="absolute bottom-8 left-8 w-80 bg-black/80 backdrop-blur-3xl border border-white/10 rounded-3xl p-6 shadow-[0_20px_50px_rgba(0,0,0,0.8)] z-20">
             <div className="flex justify-between items-start mb-5 border-b border-white/10 pb-4">
-              <span className="text-[10px] uppercase font-mono tracking-widest font-black text-cyan-400 bg-cyan-900/40 border border-cyan-500/50 px-3 py-1.5 rounded-lg">{selectedPothole.pothole_id}</span>
+              <span className="text-[10px] uppercase font-mono tracking-widest font-black text-cyan-400 bg-cyan-900/40 border border-cyan-500/50 px-3 py-1.5 rounded-lg">{selectedPothole.id}</span>
               <button onClick={() => setSelectedPothole(null)} className="text-gray-400 hover:text-white transition-colors hover:bg-white/10 p-1.5 rounded-full"><X size={18} /></button>
             </div>
             <h3 className="font-bold text-lg text-white mb-6 leading-snug flex items-start gap-3">
