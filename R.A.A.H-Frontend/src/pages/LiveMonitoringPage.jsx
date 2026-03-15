@@ -768,7 +768,7 @@ export default function LiveMonitoringPage() {
                             initial={{ opacity: 0, y: -10 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -10 }}
-                            className="absolute top-full left-0 right-16 mt-2 z-[110] bg-[#0a0a0b] border border-white/20 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden"
+                            className="absolute top-full left-0 right-0 mt-2 z-[110] bg-[#0a0a0b] border border-white/20 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden"
                           >
                             <div className="max-h-60 overflow-y-auto custom-scrollbar">
                               {searchResults.map((result, i) => (

@@ -116,13 +116,6 @@ const GeospatialIntel = () => {
         </div>
       </div>
 
-      {/* Stats Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard icon={<MapPin size={20} className="text-red-500" />} value={mapData.potholes.length} label="Potholes Detected" />
-        <StatCard icon={<Users size={20} className="text-blue-500" />} value={mapData.reports.length} label="Citizen Reports" />
-        <StatCard icon={<TrendingUp size={20} className="text-purple-500" />} value={mapData.predictions.length} label="Risk Predictions" />
-        <StatCard icon={<AlertTriangle size={20} className="text-red-500" />} value={mapData.potholes.filter(p => p.severity === 'high').length} label="High Severity" />
-      </div>
 
       {/* Filter Bar */}
       <div className="hackathon-glass rounded-2xl border border-white/5 p-4 flex flex-wrap items-center gap-6">

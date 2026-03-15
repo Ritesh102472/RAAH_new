@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, CheckCircle, MapPin, AlertCircle, Clock, Wrench } from 'lucide-react';
-import api from '../services/api';
+import api, { API_BASE } from '../services/api';
 import { useWebSocketContext } from '../context/WebSocketContext';
 
 export default function MyComplaintsPage() {
@@ -77,7 +77,7 @@ export default function MyComplaintsPage() {
                 {/* Thumbnail */}
                 <div className="w-32 h-24 sm:w-40 sm:h-28 rounded-xl overflow-hidden shadow-inner border border-white/50 shrink-0 bg-gray-200">
                   {complaint.image_url ? (
-                    <img src={complaint.image_url} alt="Reported Pothole" className="w-full h-full object-cover" />
+                    <img src={`${API_BASE}${complaint.image_url}`} alt="Reported Pothole" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400">No Image</div>
                   )}

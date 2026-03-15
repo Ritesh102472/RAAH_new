@@ -124,8 +124,24 @@ def get_potholes_list(db: Session = Depends(get_db)):
 
 
 @router.get("/geocode/search")
-async def search_location(q: str = Query(..., min_length=1)):
-    """Forward geocode: convert address/place name to lat/lng via Nominatim."""
+async def search_locations(q: str = Query(..., min_length=1)):
+    """
+    Geocode search for manual location entry.
+    """
     from map_service.geocoding import forward_geocode
-    results = await forward_geocode(q, limit=5)
+    results = await forward_geocode(q)
     return results
+
+
+@router.get("/route")
+async def get_safe_route(
+    start_lat: float, start_lng: float,
+    end_lat: float, end_lng: float,
+    db: Session = Depends(get_db)
+):
+    """
+    Returns the safest route between two points based on pothole density.
+    """
+    from map_service.routing import find_safest_route
+    result = await find_safest_route((start_lat, start_lng), (end_lat, end_lng), db)
+    return result

@@ -11,7 +11,8 @@ import {
   Cpu,
   Settings,
   ClipboardList,
-  Users
+  Users,
+  Navigation
 } from 'lucide-react';
 import NotificationToast from '../components/NotificationToast';
 import { useState, useCallback, useEffect } from 'react';
@@ -68,6 +69,7 @@ export default function DashboardLayout() {
     : [
       { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
       { name: 'Live Monitoring', path: '/monitoring', icon: <Activity size={20} /> },
+      { name: 'Live Navigation', path: '/navigation', icon: <Navigation size={20} /> },
       { name: 'Geospatial Intel', path: '/geospatial-intel', icon: <MapIcon size={20} /> },
       { name: 'Your Complaints', path: '/my-complaints', icon: <ClipboardList size={20} /> },
       { name: 'AI System', path: '/ai-system', icon: <Cpu size={20} /> },
