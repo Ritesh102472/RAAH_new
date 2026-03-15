@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/citizen", tags=["citizen"])
 
-MERGE_RADIUS_METERS = 15.0
+MERGE_RADIUS_METERS = 500.0
 
 
 def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -75,6 +75,7 @@ async def upload_pothole(
     file: UploadFile = File(...),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
+    address: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
@@ -84,7 +85,7 @@ async def upload_pothole(
         1. Save file
         2. Extract GPS from EXIF (or use provided lat/lng)
         3. Run AI detection
-        4. Reverse geocode
+        4. Reverse geocode (if address not provided)
         5. Create/merge pothole record
         6. Auto-generate complaint
         """
@@ -119,13 +120,14 @@ async def upload_pothole(
             return {
                 "status": "location_required",
                 "message": "We couldn't detect the location automatically. Please enable GPS or ensure the image has EXIF data.",
-                "file_path": file_url,
+                "file_url": file_url,
                 "potholes": [],
             }
 
         # 3. Run AI detection
         detection_result = await run_detection(file_bytes, file.filename)
         potholes_detected = detection_result.get("potholes", [])
+        annotated_image_path = detection_result.get("annotated_image_path")
 
         if not potholes_detected:
             return {
@@ -135,8 +137,18 @@ async def upload_pothole(
                 "potholes": [],
             }
 
-        # 4. Reverse geocode
-        geo = await reverse_geocode(lat, lng)
+        # 4. Reverse geocode (if no manual address provided)
+        if address:
+            # Use provided manual address
+            parts = [p.strip() for p in address.split(",")]
+            geo = {
+                "road": parts[0] if len(parts) > 0 else "Manual Road",
+                "city": parts[1] if len(parts) > 1 else "Manual City",
+                "state": parts[2] if len(parts) > 2 else "Manual State",
+                "full_address": address
+            }
+        else:
+            geo = await reverse_geocode(lat, lng)
 
         # 5. Create/merge potholes
         created_potholes = []
@@ -150,9 +162,6 @@ async def upload_pothole(
             # Try to merge with nearby existing pothole
             nearby = find_nearby_pothole(db, lat, lng, exclude_ids=handled_pothole_ids)
 
-            # CRITICAL: If we find a nearby pothole but it was JUST created in this same upload, 
-            # do NOT merge. They are distinct detections in the same image.
-            # (Now handled by exclude_ids)
             if nearby:
                 handled_pothole_ids.append(nearby.id)
                 # Merge — increment report count on complaint
@@ -183,11 +192,12 @@ async def upload_pothole(
                     lat=lat, lng=lng,
                     road_name=geo["road"],
                     city=geo["city"],
-                    state=geo["state"],
+                    state=geo.get("state", "Unknown State"),
                     country=geo.get("country", "India"),
                     full_address=geo.get("full_address"),
                     location_source=location_source,
                     image_path=file_path,
+                    annotated_image_path=annotated_image_path,
                     severity=severity,
                     confidence=confidence,
                     bbox_x=bbox[0] if len(bbox) > 0 else None,
@@ -203,13 +213,13 @@ async def upload_pothole(
                 handled_pothole_ids.append(pothole.id)
 
                 # 6. Auto-generate complaint
-                agency = assign_agency(geo["state"], geo["road"])
+                agency = assign_agency(geo.get("state", "Unknown"), geo["road"])
                 complaint = Complaint(
                     complaint_number=generate_complaint_number(pothole.id),
                     pothole_id=pothole.id,
                     lat=lat,
                     lng=lng,
-                    location_text=f"{geo['road']}, {geo['city']}, {geo['state']}",
+                    location_text=geo.get("full_address") or f"{geo['road']}, {geo['city']}",
                     road_name=geo["road"],
                     severity=severity,
                     number_of_reports=1,
@@ -238,7 +248,9 @@ async def upload_pothole(
                     "bbox": bbox,
                     "lat": lat, "lng": lng,
                     "complaint_number": complaint.complaint_number,
+                    "annotated_image_url": get_file_url(annotated_image_path) if annotated_image_path else None
                 })
+
 
         db.commit()
 
@@ -292,6 +304,71 @@ def get_pothole_detail(pothole_id: int, db: Session = Depends(get_db)):
         "severity": p.severity,
         "confidence": p.confidence,
         "location_source": p.location_source
+    }
+
+@router.get("/my-complaints")
+def get_user_complaints(
+    status: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch complaints reported by the logged-in citizen.
+    Allows optional filtering by status (e.g., 'resolved' vs 'reported'/'escalated').
+    """
+    # Rewrite query to simply join and match reporter_id
+    print(f"DEBUG: Fetching for current_user.id = {current_user.id}")
+    all_complaints = db.query(Complaint).all()
+    print(f"DEBUG: Total complaints in DB = {len(all_complaints)}")
+    
+    # Join with Report to find ANY pothole the user has reported on
+    query = db.query(Complaint).join(Pothole).join(Report).filter(
+        Report.user_id == current_user.id
+    ).distinct()
+
+
+    complaints = query.order_by(Complaint.created_at.desc()).all()
+    print(f"DEBUG: Complaints (via Report) for user {current_user.id} = {len(complaints)}")
+
+
+    # Filter by status in memory since SQLite enums can be finicky in SQLAlchemy filters
+    filtered_complaints = []
+    for c in complaints:
+        c_status_str = c.status.value if hasattr(c.status, 'value') else str(c.status)
+        if status == 'active':
+            if c_status_str != 'resolved':
+                filtered_complaints.append(c)
+        elif status == 'resolved':
+            if c_status_str == 'resolved':
+                filtered_complaints.append(c)
+        else:
+            filtered_complaints.append(c)
+
+    filtered_complaints = filtered_complaints[:limit]
+    count = len(filtered_complaints)
+
+    results = []
+    for c in filtered_complaints:
+        results.append({
+            "id": c.id,
+            "complaint_number": c.complaint_number,
+            "location": c.location_text or f"{c.road_name}, {c.city}",
+            "severity": c.severity.value,
+            "status": c.status.value,
+            "agency": c.agency,
+            "created_at": c.created_at.strftime("%Y-%m-%d %H:%M"),
+            "updated_at": c.updated_at.strftime("%Y-%m-%d %H:%M") if c.updated_at else None,
+            "lat": c.lat,
+            "lng": c.lng,
+            "image_url": get_file_url(c.pothole.annotated_image_path or c.pothole.image_path) if c.pothole else None
+        })
+
+
+
+    return {
+        "items": results,
+        "total": count
     }
 
 @router.post("/mapillary/scan")

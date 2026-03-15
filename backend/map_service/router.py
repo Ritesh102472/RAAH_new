@@ -121,3 +121,11 @@ def get_potholes_list(db: Session = Depends(get_db)):
             for p in potholes
         ]
     }
+
+
+@router.get("/geocode/search")
+async def search_location(q: str = Query(..., min_length=1)):
+    """Forward geocode: convert address/place name to lat/lng via Nominatim."""
+    from map_service.geocoding import forward_geocode
+    results = await forward_geocode(q, limit=5)
+    return results

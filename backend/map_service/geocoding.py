@@ -1,5 +1,5 @@
 """
-Reverse Geocoding using OpenStreetMap Nominatim API (free, no key required)
+Geocoding using ArcGIS Geocoding API (bypass rate limits)
 """
 import httpx
 from typing import Optional, Dict
@@ -7,8 +7,7 @@ from typing import Optional, Dict
 
 async def reverse_geocode(lat: float, lng: float) -> Dict[str, str]:
     """
-    Convert lat/lng to road name, city, state using Nominatim.
-    Returns dict with: road, city, state, country
+    Convert lat/lng to road name, city, state using ArcGIS Geocoding.
     """
     default = {
         "road": "Unknown Road",
@@ -17,36 +16,44 @@ async def reverse_geocode(lat: float, lng: float) -> Dict[str, str]:
         "country": "India",
     }
     try:
-        url = "https://nominatim.openstreetmap.org/reverse"
+        url = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode"
         params = {
-            "lat": lat,
-            "lon": lng,
-            "format": "json",
-            "addressdetails": 1,
+            "f": "json",
+            "location": f"{lng},{lat}",
         }
-        headers = {"User-Agent": "RAAH-Pothole-System/1.0"}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params, headers=headers)
-            resp.raise_for_status()
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                print(f"[Geocoding] ArcGIS Reverse Error {resp.status_code}: {resp.text}")
+                return default
             data = resp.json()
+        
         addr = data.get("address", {})
+        # ArcGIS returns address parts in different fields
         road = (
-            addr.get("road") or
-            addr.get("highway") or
-            addr.get("footway") or
-            addr.get("street") or
-            "Unknown Road"
+            addr.get("Address") or 
+            addr.get("Street") or 
+            addr.get("PlaceName") or
+            addr.get("District") or 
+            addr.get("Neighborhood") or 
+            addr.get("Branch") or
+            addr.get("Subregion")
         )
-        city = (
-            addr.get("city") or
-            addr.get("town") or
-            addr.get("village") or
-            addr.get("county") or
-            "Unknown City"
-        )
-        state = addr.get("state", "Unknown State")
-        country = addr.get("country", "India")
-        full_address = data.get("display_name", f"{road}, {city}, {state}, {country}")
+        if not road or road == "Unknown Road":
+            # Fallback to first part of Match_addr if exists
+            match_addr = addr.get("Match_addr", "")
+            if match_addr:
+                road = match_addr.split(",")[0]
+            else:
+                road = "Unknown Road"
+
+        city = addr.get("City") or addr.get("Subregion") or "Unknown City"
+        state = addr.get("Region") or "Unknown State"
+        country = addr.get("CountryCode") or "India"
+        full_address = addr.get("Match_addr") or addr.get("LongLabel") or f"{road}, {city}, {state}, {country}"
+
+
+        
         return {
             "road": road, 
             "city": city, 
@@ -57,3 +64,35 @@ async def reverse_geocode(lat: float, lng: float) -> Dict[str, str]:
     except Exception as e:
         print(f"[Geocoding] Failed for ({lat},{lng}): {e}")
         return default
+
+
+async def forward_geocode(query: str, limit: int = 5):
+    """
+    Convert an address/place name to lat/lng results using ArcGIS.
+    """
+    try:
+        url = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+        params = {
+            "f": "json",
+            "singleLine": query,
+            "maxLocations": limit,
+            "outFields": "Match_addr,Addr_type"
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code != 200:
+                print(f"[Geocoding] ArcGIS Forward Error {resp.status_code}: {resp.text}")
+                return []
+            data = resp.json()
+        
+        return [
+            {
+                "display_name": item.get("address", ""),
+                "lat": item.get("location", {}).get("y"),
+                "lon": item.get("location", {}).get("x"),
+            }
+            for item in data.get("candidates", [])
+        ]
+    except Exception as e:
+        print(f"[Geocoding] Forward geocode failed for '{query}': {e}")
+        return []

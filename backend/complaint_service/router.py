@@ -104,7 +104,10 @@ def update_complaint_status(
         raise HTTPException(404, detail="Complaint not found")
 
     try:
-        c.status = ComplaintStatus(status)
+        new_status = ComplaintStatus(status)
+        c.status = new_status
+        if new_status == ComplaintStatus.reported and not c.reported_at:
+            c.reported_at = datetime.datetime.utcnow()
     except ValueError:
         raise HTTPException(400, detail=f"Invalid status: {status}")
 
@@ -115,7 +118,9 @@ def update_complaint_status(
     pothole = c.pothole
     if status == "resolved" and pothole:
         pothole.status = PotholeStatus.resolved
-    elif status == "pending" and pothole:
+    elif status == "reported" and pothole:
+        pothole.status = PotholeStatus.complaint_filed
+    elif (status == "under_repair" or status == "pending") and pothole:
         pothole.status = PotholeStatus.repair_in_progress
 
     # Log admin action
@@ -134,15 +139,70 @@ def update_complaint_status(
 async def trigger_rescan(
     complaint_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    admin: User = Depends(require_admin),
 ):
+    """
+    Force an immediate AI verification for a specific pothole record.
+    Useful for demos and manual auditing.
+    """
+    from utils.tasks import check_pothole_resolution
+    from database.models import Complaint
+    
     c = db.query(Complaint).filter(Complaint.id == complaint_id).first()
     if not c:
         raise HTTPException(404, detail="Complaint not found")
-    # In production this would queue a Celery task to fetch Mapillary
-    # images and re-run detection. For now returns a queued response.
-    return {
-        "status": "queued",
-        "message": "Re-scan queued. Results will appear in the complaint within minutes.",
-        "complaint_id": complaint_id,
-    }
+
+    # For the immediate rescan, we can pass a specific complaint_id to the task logic
+    # or just run a modified version of the check logic
+    try:
+        # We manually trigger the resolution check for just this one complaint
+        # (This is a simplified version of the background task)
+        import asyncio
+        from map_service.mapillary import fetch_nearby_images, get_image_by_id
+        from ai_service.model import run_detection
+        from database.models import PotholeStatus, ComplaintStatus
+
+        p = c.pothole
+        if not p:
+             raise HTTPException(400, detail="No pothole data associated with this complaint")
+
+        # Use 50m radius for force rescan to ensure we catch nearby imagery
+        fresh_images = await fetch_nearby_images(p.lat, p.lng, radius=50)
+        if not fresh_images:
+            return {
+                "status": "inconclusive",
+                "message": "No new imagery found for this location to verify repair."
+            }
+
+        img_id = fresh_images[0].get("id")
+        img_bytes = await get_image_by_id(img_id)
+        if not img_bytes:
+             return {"status": "error", "message": "Failed to retrieve fresh imagery."}
+
+        detection = await run_detection(img_bytes, f"force_verify_{p.id}.jpg")
+        potholes_found = detection.get("potholes", [])
+
+        prev_status = c.status
+        if len(potholes_found) > 0:
+            c.status = ComplaintStatus.escalated
+            c.escalated_at = datetime.datetime.utcnow()
+            p.status = PotholeStatus.escalated
+            result_status = "persists"
+        else:
+            c.status = ComplaintStatus.resolved
+            p.status = PotholeStatus.resolved
+            result_status = "cleared"
+
+        db.commit()
+        return {
+            "status": "success",
+            "detection_result": result_status,
+            "previous_status": prev_status,
+            "new_status": c.status,
+            "message": f"AI Verification Complete: Pothole {'still detected' if result_status == 'persists' else 'no longer detected'}."
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"Force rescan failed: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, detail=str(e))

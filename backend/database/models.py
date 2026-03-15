@@ -73,6 +73,8 @@ class Pothole(Base):
     full_address = Column(Text, nullable=True)
     location_source = Column(String(50), nullable=True) # "image_exif", "browser_gps"
     image_path = Column(Text, nullable=True)
+    annotated_image_path = Column(Text, nullable=True)
+
     severity = Column(Enum(Severity), default=Severity.medium, nullable=False)
     confidence = Column(Float, default=0.0)
     bbox_x = Column(Float, nullable=True)
@@ -108,6 +110,7 @@ class Complaint(Base):
     maintenance_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    reported_at = Column(DateTime, nullable=True)
     escalated_at = Column(DateTime, nullable=True)
 
     pothole = relationship("Pothole", back_populates="complaint")
@@ -141,7 +144,8 @@ class Prediction(Base):
     road_type = Column(String(50), nullable=True)
     rainfall_mm = Column(Float, nullable=True)
     temperature_c = Column(Float, nullable=True)
-    computed_at = Column(DateTime, default=func.now())
+    traffic_intensity = Column(Float, default=0.0) # 0.0 to 1.0
+    computed_at = Column(DateTime, default=datetime.utcnow)
 
 
 class AdminAction(Base):

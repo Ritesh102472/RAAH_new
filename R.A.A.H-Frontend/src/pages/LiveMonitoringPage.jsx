@@ -1,9 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Activity, ScrollText, Crosshair, AlertTriangle, Upload, CheckCircle, LayoutDashboard, X, Globe, MapPin, Hash, Info } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Camera, Activity, ScrollText, Crosshair, AlertTriangle, Upload, CheckCircle, LayoutDashboard, X, Globe, MapPin, Hash, Info, Search, Navigation, MapPinned, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import api, { API_BASE } from '../services/api';
 import { useWebSocketContext } from '../context/WebSocketContext';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+// Fix for default marker icon
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
+function MapRecenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center) map.setView(center, 14);
+  }, [center, map]);
+  return null;
+}
 
 export default function LiveMonitoringPage() {
   const navigate = useNavigate();
@@ -18,6 +37,16 @@ export default function LiveMonitoringPage() {
   const [potholeDetail, setPotholeDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [locationMode, setLocationMode] = useState('gps'); // 'gps' or 'manual'
+  const [manualAddress, setManualAddress] = useState('');
+  const [debouncedManualAddress, setDebouncedManualAddress] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState(null); // { lat, lng, name }
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const fileInputRef = useRef(null);
   const imageRef = useRef(null);
 
@@ -25,16 +54,36 @@ export default function LiveMonitoringPage() {
     if (activeTab === 'logs') fetchLogs();
   }, [activeTab]);
 
-  const { isLive, subscribe } = useWebSocketContext();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedManualAddress(manualAddress);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [manualAddress]);
 
   useEffect(() => {
-    const unsubscribe = subscribe((message) => {
-      if (message.event === 'new_pothole' || message.event === 'discovery_complete') {
-        if (activeTab === 'logs') fetchLogs();
-      }
-    });
-    return unsubscribe;
-  }, [subscribe, activeTab]);
+    if (debouncedManualAddress.trim().length > 1) {
+      const fetchSuggestions = async () => {
+        setSearchLoading(true);
+        try {
+          const res = await api.get(`/map/geocode/search?q=${encodeURIComponent(debouncedManualAddress)}`);
+          setSearchResults(res.data || []);
+          setShowSuggestions(true);
+        } catch (err) {
+          console.error('Fetch suggestions failed:', err);
+          setSearchResults([]);
+        } finally {
+          setSearchLoading(false);
+        }
+      };
+      fetchSuggestions();
+    } else {
+      setSearchResults([]);
+      setShowSuggestions(false);
+    }
+  }, [debouncedManualAddress]);
+
+  const { isLive, subscribe } = useWebSocketContext();
 
   async function fetchLogs() {
     setLogsLoading(true);
@@ -48,49 +97,127 @@ export default function LiveMonitoringPage() {
     }
   }
 
-  async function handleFileUpload(e) {
+  function onFileSelected(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setPendingFile(file);
+    setUploadResult(null);
+    setUploadError('');
+    setSearchResults([]);
+    setManualAddress('');
+    setSelectedLocation(null);
+    setLocationMode('gps');
+    setShowLocationModal(true);
+  }
+
+  async function handleUseGPS() {
+    setGpsLoading(true);
+    try {
+      if (!navigator.geolocation) {
+        setUploadError('Geolocation is not supported by this browser.');
+        setShowLocationModal(false);
+        return;
+      }
+      const coords = await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos.coords),
+          (err) => {
+            console.warn('Geolocation error:', err.message, '(code:', err.code, ')');
+            resolve(null);
+          },
+          { timeout: 30000, enableHighAccuracy: false, maximumAge: 60000 }
+        );
+      });
+      if (!coords) {
+        setUploadError('Could not get your location. Try entering it manually.');
+        setLocationMode('manual');
+        setGpsLoading(false);
+        return;
+      }
+      setShowLocationModal(false);
+      await performUpload(coords.latitude, coords.longitude);
+    } finally {
+      setGpsLoading(false);
+    }
+  }
+
+  async function handleSelectResult(result) {
+    const loc = {
+      lat: parseFloat(result.lat),
+      lng: parseFloat(result.lon),
+      name: result.display_name
+    };
+    setSelectedLocation(loc);
+    setManualAddress(result.display_name);
+    setShowSuggestions(false);
+  }
+
+  async function handleSelectLocation() {
+    if (!selectedLocation) {
+      if (searchResults.length > 0) {
+        handleSelectResult(searchResults[0]);
+      } else {
+        await searchAddress();
+      }
+      return;
+    }
+    setShowLocationModal(false);
+    await performUpload(selectedLocation.lat, selectedLocation.lng, manualAddress);
+  }
+
+  async function searchAddress() {
+    if (!manualAddress.trim()) return;
+    setSearchLoading(true);
+    try {
+      const res = await api.get(`/map/geocode/search?q=${encodeURIComponent(manualAddress)}`);
+      const data = res.data;
+      setSearchResults(data);
+      if (data && data.length > 0) {
+        handleSelectResult(data[0]);
+      }
+    } catch (err) {
+      console.error('Address search failed:', err);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  async function performUpload(lat, lng, address = null) {
+    if (!pendingFile) return;
     setUploading(true);
     setUploadResult(null);
     setUploadError('');
     try {
-      if (!navigator.geolocation) {
-        setUploadError('Geolocation is not supported by this browser.');
-        setUploading(false);
-        return;
-      }
-
-      const coords = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve(pos.coords),
-          (err) => reject(err),
-          { timeout: 10000, enableHighAccuracy: true }
-        );
-      }).catch(() => {
-        alert('Location access is required to report potholes.');
-        return null;
-      });
-
-      if (!coords) {
-        setUploading(false);
-        return;
-      }
-
       const formData = new FormData();
-      formData.append('file', file);
-      formData.append('latitude', coords.latitude);
-      formData.append('longitude', coords.longitude);
+      formData.append('file', pendingFile);
+      formData.append('latitude', lat);
+      formData.append('longitude', lng);
+      if (address) {
+        formData.append('address', address);
+      }
 
       const res = await api.post('/citizen/upload', formData);
+
+      if (res.data.status === 'location_required') {
+        setUploadError(res.data.message || 'Location could not be determined.');
+        return;
+      }
+      if (res.data.status === 'no_pothole_detected') {
+        setUploadError(res.data.message || 'No potholes detected in this image.');
+        return;
+      }
+
       setUploadResult(res.data);
       if (activeTab === 'logs') fetchLogs();
     } catch (err) {
       setUploadError(err.response?.data?.detail || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
+      setPendingFile(null);
     }
   }
+
 
   async function handleCardClick(potholeId) {
     setSelectedPotholeId(potholeId);
@@ -128,7 +255,7 @@ export default function LiveMonitoringPage() {
             </button>
           ))}
         </div>
-        
+
         {/* Real-time Status */}
         <div className="flex items-center gap-3 px-4 py-2 bg-black/40 rounded-xl border border-white/5 backdrop-blur-md">
           <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-emerald-500 shadow-[0_0_10px_#10b981] animate-pulse' : 'bg-red-500'}`}></div>
@@ -147,7 +274,7 @@ export default function LiveMonitoringPage() {
               className={`flex-1 bg-black/60 rounded-2xl border border-cyan-500/30 relative overflow-hidden flex flex-col items-center ${uploadResult ? 'justify-start pt-8' : 'justify-center'} group shadow-[inset_0_0_50px_rgba(0,0,0,0.8)] cursor-pointer hover:border-cyan-400/60 transition-all`}
               onClick={() => !uploading && fileInputRef.current?.click()}
             >
-              <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleFileUpload} />
+              <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={onFileSelected} />
               {(uploading || (!uploadResult && !uploadError)) && (
                 <div className="absolute top-0 left-0 w-full h-1 bg-cyan-400 shadow-[0_0_20px_rgba(34,211,238,1)] animate-scan opacity-80 z-50" />
               )}
@@ -158,88 +285,88 @@ export default function LiveMonitoringPage() {
                 </div>
               ) : uploadResult ? (
                 <div className="flex flex-col items-center justify-start gap-8 z-10 w-full h-full p-4 pb-20 overflow-y-auto custom-scrollbar">
-                    {/* Tight wrapper that matches the physical image area */}
-                    <div className="relative inline-block max-w-full flex-shrink-0">
-                      {uploadResult.is_video ? (
-                        <video
-                          src={`${API_BASE}${uploadResult.file_url}`}
-                          controls
-                          className="max-h-[60vh] w-auto object-contain rounded-xl shadow-2xl border border-white/10"
-                          onLoadedMetadata={(e) => {
-                            setImageSize({
-                              width: e.target.videoWidth,
-                              height: e.target.videoHeight
-                            });
-                          }}
-                          onTimeUpdate={(e) => setVideoCurrentTime(e.target.currentTime)}
-                        />
-                      ) : (
-                        <img
-                          ref={imageRef}
-                          src={`${API_BASE}${uploadResult.file_url}`}
-                          alt="Pothole detection"
-                          className="max-h-[60vh] w-auto object-contain rounded-xl shadow-2xl border border-white/10"
-                          onLoad={(e) => {
-                            setImageSize({
-                              width: e.target.naturalWidth,
-                              height: e.target.naturalHeight
-                            });
-                          }}
-                        />
-                      )}
+                  {/* Tight wrapper that matches the physical image area */}
+                  <div className="relative inline-block max-w-full flex-shrink-0">
+                    {uploadResult.is_video ? (
+                      <video
+                        src={`${API_BASE}${uploadResult.file_url}`}
+                        controls
+                        className="max-h-[60vh] w-auto object-contain rounded-xl shadow-2xl border border-white/10"
+                        onLoadedMetadata={(e) => {
+                          setImageSize({
+                            width: e.target.videoWidth,
+                            height: e.target.videoHeight
+                          });
+                        }}
+                        onTimeUpdate={(e) => setVideoCurrentTime(e.target.currentTime)}
+                      />
+                    ) : (
+                      <img
+                        ref={imageRef}
+                        src={`${API_BASE}${uploadResult.file_url}`}
+                        alt="Pothole detection"
+                        className="max-h-[60vh] w-auto object-contain rounded-xl shadow-2xl border border-white/10"
+                        onLoad={(e) => {
+                          setImageSize({
+                            width: e.target.naturalWidth,
+                            height: e.target.naturalHeight
+                          });
+                        }}
+                      />
+                    )}
 
-                      {/* SVG Overlay — Now pinned precisely to the image boundaries */}
-                      {!uploadResult.is_video && imageSize.width > 0 && (
-                        <svg
-                          className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                          viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
-                          preserveAspectRatio="none"
-                        >
-                          {uploadResult.potholes?.map((p, i) => {
-                            const [x, y, w, h] = p.bbox || [0, 0, 0, 0];
-                            const labelText = `Pothole ${p.confidence.toFixed(2)}`;
-                            const fontSize = Math.max(10, imageSize.width / 50);
-                            const paddingX = 6;
-                            const paddingY = 4;
-                            const labelWidth = labelText.length * (fontSize * 0.6) + (paddingX * 2);
-                            const labelHeight = fontSize + (paddingY * 2);
+                    {/* SVG Overlay — Now pinned precisely to the image boundaries */}
+                    {!uploadResult.is_video && imageSize.width > 0 && (
+                      <svg
+                        className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                        viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+                        preserveAspectRatio="none"
+                      >
+                        {uploadResult.potholes?.map((p, i) => {
+                          const [x, y, w, h] = p.bbox || [0, 0, 0, 0];
+                          const labelText = `Pothole ${p.confidence.toFixed(2)}`;
+                          const fontSize = Math.max(10, imageSize.width / 50);
+                          const paddingX = 6;
+                          const paddingY = 4;
+                          const labelWidth = labelText.length * (fontSize * 0.6) + (paddingX * 2);
+                          const labelHeight = fontSize + (paddingY * 2);
 
-                            return (
-                              <g key={i}>
-                                <rect
-                                  x={x}
-                                  y={y}
-                                  width={w}
-                                  height={h}
-                                  fill="none"
-                                  stroke="#3b82f6"
-                                  strokeWidth={Math.max(2, imageSize.width / 400)}
-                                  className="drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]"
-                                />
-                                <rect
-                                  x={x}
-                                  y={y - labelHeight}
-                                  width={labelWidth}
-                                  height={labelHeight}
-                                  fill="#3b82f6"
-                                />
-                                <text
-                                  x={x + paddingX}
-                                  y={y - paddingY/2}
-                                  fill="white"
-                                  fontSize={fontSize}
-                                  fontWeight="black"
-                                  fontFamily="Inter, sans-serif"
-                                  dominantBaseline="text-after-edge"
-                                >
-                                  {labelText}
-                                </text>
-                              </g>
-                            );
-                          })}
-                        </svg>
-                      )}
-                    </div>
+                          return (
+                            <g key={i}>
+                              <rect
+                                x={x}
+                                y={y}
+                                width={w}
+                                height={h}
+                                fill="none"
+                                stroke="#3b82f6"
+                                strokeWidth={Math.max(2, imageSize.width / 400)}
+                                className="drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                              />
+                              <rect
+                                x={x}
+                                y={y - labelHeight}
+                                width={labelWidth}
+                                height={labelHeight}
+                                fill="#3b82f6"
+                              />
+                              <text
+                                x={x + paddingX}
+                                y={y - paddingY / 2}
+                                fill="white"
+                                fontSize={fontSize}
+                                fontWeight="black"
+                                fontFamily="Inter, sans-serif"
+                                dominantBaseline="text-after-edge"
+                              >
+                                {labelText}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    )}
+                  </div>
 
                   <div className="flex flex-col items-center gap-4 bg-black/40 p-4 rounded-2xl border border-white/5 backdrop-blur-sm mb-4 flex-shrink-0">
                     <p className="text-emerald-400 font-black uppercase tracking-[0.2em] flex items-center gap-3 text-sm">
@@ -508,6 +635,212 @@ export default function LiveMonitoringPage() {
                 ) : (
                   <div className="py-20 text-center">
                     <p className="text-red-400 font-bold text-xs tracking-widest uppercase">Error loading details</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Location Selection Modal */}
+        {showLocationModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-xl bg-black/60"
+            onClick={() => { setShowLocationModal(false); setPendingFile(null); }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-md hackathon-glass rounded-3xl border border-white/20 overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-8">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-xl font-black text-white uppercase tracking-tight mb-1">
+                      Set Location
+                    </h2>
+                    <p className="text-gray-400 text-xs font-bold tracking-wide">
+                      Choose how to provide the pothole location
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setShowLocationModal(false); setPendingFile(null); }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Tab Switcher */}
+                <div className="flex gap-2 mb-6">
+                  <button
+                    onClick={() => setLocationMode('gps')}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                      locationMode === 'gps'
+                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                        : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'
+                    }`}
+                  >
+                    <Navigation size={14} /> Use GPS
+                  </button>
+                  <button
+                    onClick={() => setLocationMode('manual')}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                      locationMode === 'manual'
+                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.2)]'
+                        : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-transparent'
+                    }`}
+                  >
+                    <MapPinned size={14} /> Enter Manually
+                  </button>
+                </div>
+
+                {/* GPS Mode */}
+                {locationMode === 'gps' && (
+                  <div className="flex flex-col items-center gap-4 py-6">
+                    <div className="w-16 h-16 rounded-full bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
+                      <Navigation size={28} className="text-cyan-400" />
+                    </div>
+                    <p className="text-gray-400 text-xs text-center font-bold tracking-wide max-w-xs">
+                      We'll use your browser's GPS to tag the pothole location automatically.
+                    </p>
+                    <button
+                      onClick={handleUseGPS}
+                      disabled={gpsLoading}
+                      className="mt-2 px-8 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-xl hover:from-cyan-500 hover:to-blue-500 transition-all shadow-[0_0_20px_rgba(34,211,238,0.3)] active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {gpsLoading ? (
+                        <>
+                          <div className="w-4 h-4 rounded-full border-2 border-t-white border-r-white/30 border-b-white/30 border-l-transparent animate-spin" />
+                          Detecting...
+                        </>
+                      ) : (
+                        <>
+                          <Navigation size={14} /> Detect My Location
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Manual Mode */}
+                {locationMode === 'manual' && (
+                  <div className="flex flex-col gap-4">
+                    <div className="relative">
+                      <div className="flex gap-2">
+                        <div className="relative flex-1 group">
+                          <input
+                            type="text"
+                            value={manualAddress}
+                            onChange={(e) => {
+                              setManualAddress(e.target.value);
+                              if (e.target.value.length > 1) setShowSuggestions(true);
+                            }}
+                            onFocus={() => { if (manualAddress.length > 1) setShowSuggestions(true); }}
+                            onKeyDown={(e) => e.key === 'Enter' && searchAddress()}
+                            placeholder="Search address, city, or landmark..."
+                            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white text-sm placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 focus:shadow-[0_0_15px_rgba(34,211,238,0.15)] transition-all"
+                          />
+                          {searchLoading && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                              <div className="w-4 h-4 rounded-full border-2 border-t-cyan-500 border-r-cyan-500/30 border-b-cyan-500/30 border-l-transparent animate-spin" />
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={searchAddress}
+                          disabled={searchLoading || !manualAddress.trim()}
+                          className="px-6 py-3 bg-cyan-600/80 hover:bg-cyan-500 text-white rounded-xl transition-all active:scale-95 disabled:opacity-40 font-black text-xs uppercase tracking-widest"
+                        >
+                          Search
+                        </button>
+                      </div>
+
+                      {/* Dropdown Suggestions */}
+                      <AnimatePresence>
+                        {showSuggestions && searchResults.length > 0 && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className="absolute top-full left-0 right-16 mt-2 z-[110] bg-[#0a0a0b] border border-white/20 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden"
+                          >
+                            <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                              {searchResults.map((result, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleSelectResult(result)}
+                                  className="w-full text-left px-4 py-3 hover:bg-cyan-500/10 border-b border-white/5 last:border-0 transition-all group"
+                                >
+                                  <p className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors truncate">
+                                    {result.display_name}
+                                  </p>
+                                  <p className="text-[10px] text-gray-500 mt-0.5 truncate uppercase tracking-tighter">
+                                    {result.display_name.split(',').slice(1).join(',').trim()}
+                                  </p>
+                                </button>
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {/* Map Preview */}
+                    <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-white/10 group bg-black/40">
+                      {selectedLocation ? (
+                        <MapContainer
+                          center={[selectedLocation.lat, selectedLocation.lng]}
+                          zoom={14}
+                          className="h-full w-full"
+                          zoomControl={false}
+                        >
+                          <TileLayer
+                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                          />
+                          <Marker position={[selectedLocation.lat, selectedLocation.lng]} />
+                          <MapRecenter center={[selectedLocation.lat, selectedLocation.lng]} />
+                        </MapContainer>
+                      ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-600">
+                          <MapPinned size={32} />
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em]">Select a location to preview map</p>
+                        </div>
+                      )}
+                      
+                      {selectedLocation && (
+                        <div className="absolute bottom-3 left-3 right-3 z-[100] bg-black/80 backdrop-blur-md border border-cyan-500/30 p-2 rounded-lg pointer-events-none">
+                          <p className="text-[9px] font-mono text-cyan-400 truncate uppercase tracking-widest">
+                            {selectedLocation.lat.toFixed(5)}, {selectedLocation.lng.toFixed(5)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Confirm Button */}
+                    <button
+                      onClick={handleSelectLocation}
+                      disabled={!selectedLocation && !manualAddress.trim()}
+                      className={`w-full py-4 rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 ${
+                        selectedLocation
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_25px_rgba(16,185,129,0.3)]'
+                          : 'bg-white/5 text-gray-500 border border-white/10 cursor-not-allowed'
+                      }`}
+                    >
+                      {selectedLocation ? (
+                        <>
+                          <Check size={16} /> Confirm Location & Report
+                        </>
+                      ) : (
+                        'Enter Location to Continue'
+                      )}
+                    </button>
                   </div>
                 )}
               </div>

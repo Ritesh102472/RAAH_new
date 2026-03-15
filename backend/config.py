@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     MAPILLARY_ACCESS_TOKEN: str = ""
     AI_MODEL_URL: str = "http://localhost:8001/detect-pothole"
     AI_MODEL_ENABLED: bool = True
+    OPENWEATHER_API_KEY: str = ""
+    TOMTOM_API_KEY: str = ""
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000"
     APP_ENV: str = "development"
 

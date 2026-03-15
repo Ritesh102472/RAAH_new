@@ -13,6 +13,9 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import AISystemPage from './pages/AISystemPage';
 import AboutPage from './pages/AboutPage';
 import SettingsPage from './pages/SettingsPage';
+import MyComplaintsPage from './pages/MyComplaintsPage';
+import GeospatialIntel from './pages/GeospatialIntel';
+import UserManagement from './pages/UserManagement';
 
 function ProtectedRoute({ children }) {
   const { token } = useAuth();
@@ -36,9 +39,12 @@ function AppRoutes() {
       <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<DashboardHome />} />
         <Route path="/monitoring" element={<LiveMonitoringPage />} />
-        <Route path="/map" element={<MapPage />} />
+        <Route path="/map" element={<AdminRoute><MapPage /></AdminRoute>} />
+        <Route path="/geospatial-intel" element={<GeospatialIntel />} />
+        <Route path="/users" element={<AdminRoute><UserManagement /></AdminRoute>} />
         <Route path="/complaints" element={<AdminRoute><ComplaintsPage /></AdminRoute>} />
-        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/my-complaints" element={<MyComplaintsPage />} />
+        <Route path="/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/ai-system" element={<AISystemPage />} />
       </Route>

@@ -103,10 +103,10 @@ def _run_yolo_on_bytes(file_bytes: bytes) -> Dict[str, Any]:
                 w = x2 - x1
                 h = y2 - y1
                 
-                # SKY GATE: Potholes cannot be in the top 35% of a dashcam/phone image
-                # This mathematically eliminates clouds/trees being marked as potholes.
-                if y1 < (img.height * 0.35):
-                    print(f"[AI] 🛡️ Sky Gate: Blocked impossible pothole at y={y1} (Top 35% of {img.height}px)")
+                # 1. THE "SKY" GATE: Reject anything in the top 35% of the image
+                y_center_normalized = (y1 + y2) / 2 / img.height
+                if y_center_normalized < 0.35:
+                    print(f"[AI] 🛡️ Sky Gate: Blocked impossible pothole at y={round(y_center_normalized, 2)} (Top 35% of {img.height}px)")
                     continue
 
                 bbox = [x1, y1, w, h]
@@ -118,7 +118,27 @@ def _run_yolo_on_bytes(file_bytes: bytes) -> Dict[str, Any]:
                 })
 
         print(f"[AI] Found {len(potholes)} potholes above {CONFIDENCE_THRESHOLD}")
-        return {"potholes": potholes}
+        
+        annotated_path = None
+        if potholes:
+            # Create annotated image for display in reports
+            import uuid
+            img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            for p in potholes:
+                x, y, w, h = [int(v) for v in p["bbox"]]
+                cv2.rectangle(img_cv, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(img_cv, f"Pothole {p['confidence']:.2f}", (x, y-10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            filename = f"annotated_{uuid.uuid4().hex}.jpg"
+            save_path = os.path.join(settings.UPLOAD_DIR, filename)
+            cv2.imwrite(save_path, img_cv)
+            annotated_path = f"/uploads/{filename}"
+
+        return {
+            "potholes": potholes,
+            "annotated_image_path": annotated_path
+        }
 
     except Exception as e:
         import traceback
@@ -126,6 +146,7 @@ def _run_yolo_on_bytes(file_bytes: bytes) -> Dict[str, Any]:
         print(err_msg)
         print(traceback.format_exc())
         return {"potholes": [], "error": err_msg}
+
 
 
 # Stub detection removed to prevent fake sky potholes.

@@ -9,7 +9,9 @@ import {
   AlertTriangle,
   BarChart3,
   Cpu,
-  Settings
+  Settings,
+  ClipboardList,
+  Users
 } from 'lucide-react';
 import NotificationToast from '../components/NotificationToast';
 import { useState, useCallback, useEffect } from 'react';
@@ -59,12 +61,15 @@ export default function DashboardLayout() {
     ? [
       { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
       { name: 'Complaints', path: '/complaints', icon: <AlertTriangle size={20} /> },
+      { name: 'Geospatial Intel', path: '/geospatial-intel', icon: <MapIcon size={20} /> },
+      { name: 'User Management', path: '/users', icon: <Users size={20} /> },
+      { name: 'Analytics', path: '/analytics', icon: <BarChart3 size={20} /> },
     ]
     : [
       { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
       { name: 'Live Monitoring', path: '/monitoring', icon: <Activity size={20} /> },
-      { name: 'Map', path: '/map', icon: <MapIcon size={20} /> },
-      { name: 'Analytics', path: '/analytics', icon: <BarChart3 size={20} /> },
+      { name: 'Geospatial Intel', path: '/geospatial-intel', icon: <MapIcon size={20} /> },
+      { name: 'Your Complaints', path: '/my-complaints', icon: <ClipboardList size={20} /> },
       { name: 'AI System', path: '/ai-system', icon: <Cpu size={20} /> },
       { name: 'Settings', path: '/settings', icon: <Settings size={20} /> },
     ];

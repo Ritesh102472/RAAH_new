@@ -123,3 +123,44 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.3);
 }
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.4s ease-out forwards;
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 0.5; }
+  50% { opacity: 0.8; box-shadow: 0 0 15px 3px rgba(34,211,238,0.8); }
+  90% { opacity: 0.5; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+.animate-scan {
+  animation: scan-line 3s linear infinite;
+}

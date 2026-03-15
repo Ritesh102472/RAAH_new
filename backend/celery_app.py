@@ -31,5 +31,9 @@ celery_app.conf.update(
             "schedule": 3600.0,  # Every hour (Global Ingestion)
             "args": (28.6139, 77.2090), # Starting at Delhi
         },
+        "check-pothole-resolution": {
+            "task": "utils.tasks.check_pothole_resolution",
+            "schedule": 43200.0,  # Every 12 hours
+        },
     },
 )

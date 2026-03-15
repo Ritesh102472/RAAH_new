@@ -60,6 +60,42 @@ def get_predictions(db: Session = Depends(get_db)):
     return {"type": "FeatureCollection", "features": features, "total": len(features)}
 
 
+@router.get("/analyze")
+async def analyze_point(lat: float, lng: float, db: Session = Depends(get_db)):
+    """
+    On-demand analysis for a specific coordinate.
+    """
+    try:
+        from prediction_service.weather import get_weather
+        from prediction_service.traffic import get_traffic_intensity
+        from prediction_service.pvi import compute_pvi
+        
+        weather = await get_weather(lat, lng)
+        traffic = await get_traffic_intensity(lat, lng)
+        
+        score, risk = compute_pvi(
+            rainfall_mm=weather["rainfall_mm"],
+            freeze_thaw=weather["freeze_thaw"],
+            traffic_intensity=traffic,
+            lat=lat,
+            lng=lng,
+            humidity=weather.get("humidity", 50.0)
+        )
+        
+        return {
+            "lat": lat,
+            "lng": lng,
+            "pvi_score": score,
+            "risk_level": risk,
+            "rainfall_mm": weather["rainfall_mm"],
+            "temperature_c": weather["temperature_c"],
+            "traffic_intensity": traffic,
+        }
+    except Exception as e:
+        print(f"[Analyze] Point failed: {e}")
+        return {"error": str(e)}
+
+
 @router.post("/refresh")
 async def refresh_predictions(
     background_tasks: BackgroundTasks,

@@ -259,25 +259,64 @@ def autonomous_discovery(lat: float = 28.6139, lng: float = 77.2090, depth: int 
             f_lng, f_lat = coords[0], coords[1]
             
             # Check if we already have this Mapillary feature
-            existing = db.query(Pothole).filter(Pothole.image_path == f"mapillary_feat://{feat_id}").first()
-            if existing:
+            existing_feat = db.query(Pothole).filter(Pothole.image_path == f"mapillary_feat://{feat_id}").first()
+            if existing_feat:
                 continue
 
-            # Basic geocode (might be slow if many, so we use a simplified version or skip if too many)
-            # For discovery, we'll just use the coordinates and update road later if needed
-            
-            p = Pothole(
-                lat=f_lat, lng=f_lng,
-                road_name="Mapillary Discovered Road",
-                location_source="mapillary_global_ai",
-                image_path=f"mapillary_feat://{feat_id}",
-                severity=Severity.medium,
-                confidence=0.85, # Mapillary's detections are generally reliable
-                status=PotholeStatus.detected,
-                source=ReportSource.mapillary,
-            )
-            db.add(p)
-            new_count += 1
+            # Check if this pothole was already reported / detected nearby (500m radius)
+            from citizen_service.router import find_nearby_pothole
+            nearby = find_nearby_pothole(db, f_lat, f_lng)
+
+            if nearby:
+                # Add report to existing pothole
+                from database.models import Report
+                report = Report(
+                    pothole_id=nearby.id,
+                    user_id=None,
+                    source=ReportSource.mapillary,
+                    image_path=f"mapillary_feat://{feat_id}",
+                    lat=f_lat, lng=f_lng,
+                    location_source="mapillary_global_ai",
+                )
+                db.add(report)
+                if nearby.complaint:
+                    nearby.complaint.number_of_reports += 1
+                    nearby.complaint.updated_at = datetime.datetime.utcnow()
+                new_count += 1
+            else:
+                # New pothole
+                p = Pothole(
+                    lat=f_lat, lng=f_lng,
+                    road_name="Mapillary Discovered Road",
+                    location_source="mapillary_global_ai",
+                    image_path=f"mapillary_feat://{feat_id}",
+                    severity=Severity.medium,
+                    confidence=0.85, # Mapillary's detections are generally reliable
+                    status=PotholeStatus.detected,
+                    source=ReportSource.mapillary,
+                )
+                db.add(p)
+                db.flush()
+                
+                # Auto-generate complaint for discovered pothole
+                from database.models import Complaint, ComplaintStatus
+                from citizen_service.router import generate_complaint_number, assign_agency
+                agency = assign_agency("Unknown State", "Mapillary Discovered Road")
+                complaint = Complaint(
+                    complaint_number=generate_complaint_number(p.id),
+                    pothole_id=p.id,
+                    lat=f_lat,
+                    lng=f_lng,
+                    location_text=f"Mapillary Discovered, lat: {f_lat}, lng: {f_lng}",
+                    road_name="Mapillary Discovered Road",
+                    severity=Severity.medium,
+                    number_of_reports=1,
+                    status=ComplaintStatus.reported,
+                    agency=agency,
+                )
+                db.add(complaint)
+                p.status = PotholeStatus.complaint_filed
+                new_count += 1
 
         db.commit()
         print(f"[Discovery] Successfully ingested {new_count} new potholes from Mapillary Global.")
@@ -296,6 +335,82 @@ def autonomous_discovery(lat: float = 28.6139, lng: float = 77.2090, depth: int 
     except Exception as e:
         db.rollback()
         print(f"[Discovery] Task failed: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+@celery_app.task(name="utils.tasks.check_pothole_resolution")
+def check_pothole_resolution():
+    """
+    Checks if reported potholes have been resolved after 7 days.
+    1. Fetches complaints older than 7 days with status 'reported'.
+    2. Runs a fresh rescan for that location.
+    3. If pothole persists -> escalate.
+    4. If pothole gone -> resolve.
+    """
+    import asyncio
+    from database.connection import SessionLocal
+    from database.models import Complaint, Pothole, ComplaintStatus, PotholeStatus
+    from map_service.mapillary import fetch_nearby_images, get_image_by_id
+    from ai_service.model import run_detection
+
+    db = SessionLocal()
+    try:
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+        complaints = db.query(Complaint).filter(
+            Complaint.status == ComplaintStatus.reported,
+            Complaint.reported_at < cutoff
+        ).all()
+
+        results = {"processed": len(complaints), "resolved": 0, "escalated": 0}
+        
+        for c in complaints:
+            p = c.pothole
+            if not p:
+                continue
+
+            # Attempt to fetch fresh imagery for this location
+            # In a real scenario, we'd look for images taken AFTER c.reported_at
+            fresh_images = asyncio.run(fetch_nearby_images(p.lat, p.lng, radius=10))
+            if not fresh_images:
+                # If no fresh imagery is available, we can't verify yet.
+                # In a more advanced version, we might trigger a drone or citizen request.
+                continue
+
+            # Sort images by captured_at if available to get the newest one
+            # For this hackathon, we'll just take the first one returned
+            img_id = fresh_images[0].get("id")
+            img_bytes = asyncio.run(get_image_by_id(img_id))
+            
+            if not img_bytes:
+                continue
+
+            # Run detection on newest image
+            detection = asyncio.run(run_detection(img_bytes, f"verify_{p.id}_{img_id}.jpg"))
+            potholes_found = detection.get("potholes", [])
+
+            if len(potholes_found) > 0:
+                # Still there! ESCALATE
+                c.status = ComplaintStatus.escalated
+                c.escalated_at = datetime.datetime.utcnow()
+                p.status = PotholeStatus.escalated
+                results["escalated"] += 1
+            else:
+                # Pothole gone! RESOLVE
+                c.status = ComplaintStatus.resolved
+                p.status = PotholeStatus.resolved
+                results["resolved"] += 1
+            
+            c.updated_at = datetime.datetime.utcnow()
+            p.updated_at = datetime.datetime.utcnow()
+
+        db.commit()
+        print(f"[Celery] Resolution check complete. Results: {results}")
+        return results
+    except Exception as e:
+        db.rollback()
+        import traceback
+        print(f"[Celery] Resolution check failed: {e}\n{traceback.format_exc()}")
         return {"error": str(e)}
     finally:
         db.close()
